@@ -8,8 +8,11 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.media.ExifInterface
@@ -17,6 +20,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import app.fovea.camera.state.Look
 import app.fovea.camera.state.LookMath
+import app.fovea.camera.state.PhotoEffect
 import java.io.IOException
 import kotlin.math.hypot
 
@@ -25,7 +29,9 @@ object LookProcessor {
     // Keeps memory use safe on phones. Larger photos are scaled down for the look copy only.
     private const val MAX_PIXELS = 8_000_000L
 
-    fun createLookCopy(context: Context, source: Uri, look: Look, watermark: String? = null): Uri? {
+    fun createLookCopy(
+        context: Context, source: Uri, look: Look, watermark: String? = null, effect: PhotoEffect = PhotoEffect.NONE
+    ): Uri? {
         val cr = context.contentResolver
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -58,12 +64,16 @@ object LookProcessor {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
-            colorFilter = ColorMatrixColorFilter(ColorMatrix(LookMath.matrix(look)))
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix(if (effect == PhotoEffect.DOCUMENT) documentMatrix() else LookMath.matrix(look))
+            )
         }
         canvas.drawBitmap(upright, 0f, 0f, paint)
         upright.recycle()
 
-        if (look.vignette > 0f) {
+        if (effect == PhotoEffect.TILT_SHIFT) applyTiltShift(out, canvas)
+
+        if (look.vignette > 0f && effect != PhotoEffect.DOCUMENT) {
             val radius = hypot(w / 2.0, h / 2.0).toFloat()
             val edge = Color.argb((look.vignette * 255).toInt().coerceIn(0, 255), 0, 0, 0)
             val shader = RadialGradient(
@@ -75,7 +85,8 @@ object LookProcessor {
         if (!watermark.isNullOrBlank()) drawWatermark(canvas, w, h, watermark)
 
         val suffix = listOfNotNull(
-            if (look != Look.OFF) look.short else null,
+            if (effect != PhotoEffect.NONE) effect.short else null,
+            if (look != Look.OFF && effect != PhotoEffect.DOCUMENT) look.short else null,
             if (!watermark.isNullOrBlank()) "WM" else null
         ).joinToString("_")
         val baseName = displayName(context, source)?.substringBeforeLast('.')
@@ -103,6 +114,48 @@ object LookProcessor {
         }
         out.recycle()
         return uri
+    }
+
+    /** Grayscale, strong contrast and a brighter background: makes paper look clean. Enhance only, no cropping. */
+    private fun documentMatrix(): FloatArray {
+        val c = 1.7f
+        val offset = (-0.5f * c + 0.5f) * 255f + 28f
+        val r = 0.299f * c
+        val g = 0.587f * c
+        val b = 0.114f * c
+        return floatArrayOf(
+            r, g, b, 0f, offset,
+            r, g, b, 0f, offset,
+            r, g, b, 0f, offset,
+            0f, 0f, 0f, 1f, 0f
+        )
+    }
+
+    /**
+     * Miniature look: the top and bottom of the photo are blurred, the middle band stays sharp.
+     * The blur is made by shrinking and enlarging the photo (works on every phone, no special libraries).
+     */
+    private fun applyTiltShift(img: Bitmap, canvas: Canvas) {
+        val w = img.width
+        val h = img.height
+        val small = Bitmap.createScaledBitmap(img, (w / 12).coerceAtLeast(2), (h / 12).coerceAtLeast(2), true)
+        val blurred = Bitmap.createScaledBitmap(small, w, h, true)
+        if (small !== blurred) small.recycle()
+        val layer = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val lc = Canvas(layer)
+        lc.drawBitmap(blurred, 0f, 0f, null)
+        blurred.recycle()
+        val mask = Paint().apply {
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+            shader = LinearGradient(
+                0f, 0f, 0f, h.toFloat(),
+                intArrayOf(Color.BLACK, Color.TRANSPARENT, Color.TRANSPARENT, Color.BLACK),
+                floatArrayOf(0f, 0.34f, 0.66f, 1f), Shader.TileMode.CLAMP
+            )
+        }
+        lc.drawRect(0f, 0f, w.toFloat(), h.toFloat(), mask)
+        canvas.drawBitmap(layer, 0f, 0f, null)
+        layer.recycle()
     }
 
     /** Text in the bottom-right corner, white with a soft dark shadow, sized from the photo. */

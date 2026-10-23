@@ -228,7 +228,7 @@ fun PresetLibraryScreen(vm: CameraViewModel, onBack: () -> Unit, onCreate: () ->
             StateView(
                 Icons.Filled.Star,
                 if (s.presets.isEmpty()) "No presets yet" else "No matches",
-                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 6." else "Try a different search.",
+                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 7." else "Try a different search.",
                 actionLabel = if (s.presets.isEmpty()) "Create preset" else null,
                 onAction = if (s.presets.isEmpty()) onCreate else null
             )
@@ -271,7 +271,7 @@ fun PresetCreateScreen(vm: CameraViewModel, onBack: () -> Unit) {
             Text("CATEGORY", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall)
             Row { PresetCategory.values().forEach { c -> FoveaChip(c.label, { cat = c }, selected = c == cat) } }
             Text(
-                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 6.",
+                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 7.",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall
             )
             FoveaChip("Save locally", { if (vm.addPreset(name, desc, cat)) onBack() }, selected = true, enabled = name.isNotBlank())
@@ -288,7 +288,7 @@ fun PresetCodeScreen(onBack: () -> Unit) {
         CodeCheck.TOO_SHORT -> "Too short. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.TOO_LONG -> "Too long. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.BAD_CHARACTERS -> "Only letters A–Z and digits 0–9 are allowed." to false
-        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 6." to true
+        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 7." to true
     }
     ScreenScaffold("Enter preset code", onBack) {
         Column(Modifier.padding(Fovea.ScreenPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -400,7 +400,12 @@ fun CapabilitiesScreen(engine: CameraEngine, onBack: () -> Unit) {
                 CapRow("Manual ISO and shutter", if (c.isoSupported) "ISO ${c.isoMin}–${c.isoMax}" else "Not supported")
                 CapRow("Manual focus", if (c.manualFocus) "Supported" else "Not supported")
                 CapRow("White balance presets", c.awbModes.joinToString { it.label })
-                CapRow("RAW (hardware)", if (c.rawCapable) "Hardware supports it. DNG capture is not built yet." else "Not supported")
+                CapRow("RAW / DNG", if (c.rawCapable) "Supported (RAW / DNG mode in Capture tools)" else "Not supported")
+                CapRow("Slow motion (high speed)", yn(c.highSpeed))
+                CapRow("HDR (phone extension)", yn(c.extHdr))
+                CapRow("Night (phone extension)", yn(c.extNight))
+                CapRow("Portrait blur (phone extension)", yn(c.extBokeh))
+                CapRow("Front + rear together (Dual video)", yn(c.dualCapable))
             }
         }
     }

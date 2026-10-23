@@ -1,1 +1,1 @@
-Stage 5 (part 1): burst, time-lapse photos and watermark are real now. Other modes still planned.
+Stage 6: photos open in your phone Gallery. New modes: HDR, Night, Portrait blur (if your phone allows), Tilt-shift, Documents, Ultra HD, Long exposure, RAW/DNG, Slow motion, Dual video. Panorama is still planned.

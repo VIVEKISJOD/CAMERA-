@@ -1,5 +1,6 @@
 package app.fovea.camera.nav
 
+import android.content.Intent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -74,7 +75,19 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
         composable(Routes.PRESETS) { PresetLibraryScreen(vm, back, { nav.navigate(Routes.PRESET_CREATE) }, { nav.navigate(Routes.PRESET_CODE) }) }
         composable(Routes.PRESET_CREATE) { PresetCreateScreen(vm, back) }
         composable(Routes.PRESET_CODE) { PresetCodeScreen(back) }
-        composable(Routes.GALLERY) { GalleryScreen(engine, back) { reviewItem = it; nav.navigate(Routes.REVIEW) } }
+        composable(Routes.GALLERY) {
+            GalleryScreen(engine, back) { item ->
+                // Open in the phone's own Gallery app. Fovea's own review screen is only the fallback.
+                val opened = try {
+                    ctx.startActivity(
+                        Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    )
+                    true
+                } catch (e: Exception) { false }
+                if (!opened) { reviewItem = item; nav.navigate(Routes.REVIEW) }
+            }
+        }
         composable(Routes.REVIEW) { ReviewScreen(reviewItem, engine, back) }
         composable(Routes.CAPS) { CapabilitiesScreen(engine, back) }
         composable(Routes.ABOUT) { AboutScreen(back) }

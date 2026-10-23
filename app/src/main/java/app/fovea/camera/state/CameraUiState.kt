@@ -29,6 +29,33 @@ enum class StartCamera(val label: String) { LAST("Last used"), REAR("Rear"), FRO
 enum class DriveMode(val label: String) { SINGLE("Single"), BURST("Burst"), TIMELAPSE("Time-lapse") }
 enum class LapseInterval(val label: String, val seconds: Int) { S2("2 s", 2), S5("5 s", 5), S10("10 s", 10), S30("30 s", 30) }
 enum class LapseFrames(val label: String, val count: Int) { F10("10 photos", 10), F30("30 photos", 30), F60("60 photos", 60), F120("120 photos", 120) }
+/** Photo effect made on a saved COPY (the original is always kept). */
+enum class PhotoEffect(val short: String) { NONE(""), TILT_SHIFT("TILT"), DOCUMENT("DOC") }
+
+/**
+ * Special camera modes added in Stage 6. Only one can be active. NONE = the normal camera.
+ * video = records video; the rest take photos.
+ */
+enum class SpecialMode(val label: String, val blurb: String, val video: Boolean = false) {
+    NONE("Normal", "Standard camera"),
+    HDR("HDR", "Phone's own HDR (if the phone offers it to apps)"),
+    NIGHT("Night", "Phone's own night mode (if the phone offers it to apps)"),
+    PORTRAIT("Portrait blur", "Phone's own background blur (if the phone offers it to apps)"),
+    TILT_SHIFT("Tilt-shift", "Miniature look: top and bottom blurred in a saved copy"),
+    DOCUMENTS("Documents", "Clean, high-contrast copy for paper (no auto-crop)"),
+    ULTRA_HD("Ultra HD", "Highest photo resolution the camera allows"),
+    LONG_EXPOSURE("Long exposure", "Blends many photos for smooth water and light trails. Use a tripod"),
+    RAW("RAW / DNG", "Unprocessed DNG file. Preview pauses for a moment"),
+    SLOW_MOTION("Slow motion", "High frame rate video (no sound). Preview pauses while recording", video = true),
+    DUAL_VIDEO("Dual video", "Front and rear camera record together as two videos", video = true);
+
+    val effect: PhotoEffect get() = when (this) {
+        TILT_SHIFT -> PhotoEffect.TILT_SHIFT
+        DOCUMENTS -> PhotoEffect.DOCUMENT
+        else -> PhotoEffect.NONE
+    }
+}
+enum class LongExposureLength(val label: String, val frames: Int) { F8("8 photos", 8), F16("16 photos", 16), F30("30 photos", 30) }
 enum class JpegQuality(val label: String, val value: Int) { MAX("Maximum", 100), HIGH("High", 95), STANDARD("Standard", 85) }
 enum class VideoQuality(val label: String) { UHD("4K (if supported)"), FHD("Full HD 1080p"), HD("HD 720p"), SD("SD") }
 enum class GuideColor(val label: String, val argb: Long) {
@@ -109,6 +136,8 @@ data class CameraUiState(
     val watermarkText: String = "Fovea",
     // Not saved: the camera always starts in single-photo mode so a burst never starts by surprise.
     val drive: DriveMode = DriveMode.SINGLE,
+    val special: SpecialMode = SpecialMode.NONE,
+    val longExposure: LongExposureLength = LongExposureLength.F16,
     val lapseInterval: LapseInterval = LapseInterval.S5,
     val lapseFrames: LapseFrames = LapseFrames.F30,
     val flags: Set<UiFlag> = setOf(UiFlag.HAPTICS),

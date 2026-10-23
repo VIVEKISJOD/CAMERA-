@@ -6,14 +6,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 6. */
+/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 7. */
 class CameraViewModel : ViewModel() {
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
 
     private fun change(block: CameraUiState.() -> CameraUiState) = _state.update { it.block() }
 
-    fun setMode(m: CaptureMode) = change { if (recording) this else copy(mode = m, manualField = ManualField.NONE) }
+    /** Picking Pro / Video / Photo always leaves any special mode. */
+    fun setMode(m: CaptureMode) = change {
+        if (recording) this else copy(mode = m, special = SpecialMode.NONE, manualField = ManualField.NONE)
+    }
+
+    /** Special modes are never saved: the camera always starts normal. Slow motion and dual video are video modes. */
+    fun setSpecial(sp: SpecialMode) = change {
+        if (recording) this else {
+            val newMode = when {
+                sp.video -> CaptureMode.VIDEO
+                sp != SpecialMode.NONE && mode == CaptureMode.VIDEO -> CaptureMode.PHOTO
+                else -> mode
+            }
+            copy(special = sp, mode = newMode, manualField = ManualField.NONE)
+        }
+    }
+    fun cycleLongExposure() = change { copy(longExposure = next(longExposure)) }
     fun cycleFlash() = change { copy(flash = FlashMode.values()[(flash.ordinal + 1) % FlashMode.values().size]) }
     fun cycleAspect() = change { copy(aspect = AspectOption.values()[(aspect.ordinal + 1) % AspectOption.values().size]) }
     fun cycleTimer() = change { copy(timer = TimerOption.values()[(timer.ordinal + 1) % TimerOption.values().size]) }

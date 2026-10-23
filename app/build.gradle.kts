@@ -17,11 +17,11 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.5.$buildNumber"
+        versionName = "0.6.$buildNumber"
         buildConfigField("String", "GITHUB_REPO", "\"$githubRepo\"")
     }
     // PERSONAL-USE signing key, committed on purpose so updates install over older builds.
-    // Replaced by a secret-based key before any public release (Stage 6).
+    // Replaced by a secret-based key before any public release (Stage 8).
     signingConfigs {
         create("personal") {
             storeFile = file("fovea-personal.jks")
@@ -60,6 +60,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-video:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+    implementation("androidx.camera:camera-extensions:$camerax")
 
     testImplementation("junit:junit:4.13.2")
 }

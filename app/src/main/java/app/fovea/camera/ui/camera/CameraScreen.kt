@@ -123,65 +123,131 @@ fun CameraScreen(
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         }
     }
+    // Dual video uses two extra preview views (rear on top, front below). They are separate from the main one.
+    val previewBack = remember { PreviewView(ctx).apply { scaleType = PreviewView.ScaleType.FILL_CENTER; implementationMode = PreviewView.ImplementationMode.COMPATIBLE } }
+    val previewFront = remember { PreviewView(ctx).apply { scaleType = PreviewView.ScaleType.FILL_CENTER; implementationMode = PreviewView.ImplementationMode.COMPATIBLE } }
+    val rebindTick by engine.rebind.collectAsState()
+    var busy by remember { mutableStateOf(false) }
     var count by remember { mutableIntStateOf(0) }
     var showMore by remember { mutableStateOf(false) }
     var showLooks by remember { mutableStateOf(false) }
-    var latest by remember { mutableStateOf<Uri?>(null) }
+    var latest by remember { mutableStateOf<MediaItem?>(null) }
     var seqDone by remember { mutableIntStateOf(0) }
     var seqTotal by remember { mutableIntStateOf(0) }
     var seqJob by remember { mutableStateOf<Job?>(null) }
 
+    suspend fun countdown(seconds: Int) {
+        var i = seconds
+        while (i > 0) { count = i; delay(1000); i-- }
+        count = 0
+    }
+
     fun shutter() {
         val st = vm.state.value
-        // A running burst or time-lapse is stopped by pressing the shutter again.
+        // A running burst, time-lapse or long exposure is stopped by pressing the shutter again.
         if (seqJob?.isActive == true) { seqJob?.cancel(); return }
-        if (count > 0 || !camGranted) return
+        if (count > 0 || busy || !camGranted) return
         if (UiFlag.HAPTICS in st.flags) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        if (st.mode == CaptureMode.VIDEO) {
-            engine.toggleRecording(audioGranted && st.recordAudio) { rec -> vm.setRecording(rec) }
-        } else if (st.drive != DriveMode.SINGLE) {
-            seqJob = scope.launch {
-                val burst = st.drive == DriveMode.BURST
-                val total = if (burst) BURST_SHOTS else st.lapseFrames.count
-                val gapMs = if (burst) 0L else st.lapseInterval.seconds * 1000L
-                var done = 0
+        val sp = st.special
+        when {
+            sp == SpecialMode.DUAL_VIDEO ->
+                engine.toggleDualRecording(audioGranted && st.recordAudio) { rec -> vm.setRecording(rec) }
+            sp == SpecialMode.SLOW_MOTION -> scope.launch {
+                busy = true
                 try {
-                    var i = st.timer.seconds
-                    while (i > 0) { count = i; delay(1000); i-- }
-                    count = 0
-                    seqDone = 0
-                    seqTotal = total
-                    while (done < total) {
-                        val startedAt = SystemClock.elapsedRealtime()
-                        // Originals only: no Look or watermark copies, so a long run stays fast and light.
-                        val ok = engine.takePhotoAwait(!burst && vm.state.value.shutterSound, Look.OFF, null)
-                        if (!ok) break
-                        done++
-                        seqDone = done
-                        if (done < total && gapMs > 0) {
-                            val wait = gapMs - (SystemClock.elapsedRealtime() - startedAt)
-                            if (wait > 0) delay(wait)
-                        }
+                    if (engine.slowMoActive) {
+                        engine.stopSlowMo()
+                        vm.setRecording(false)
+                    } else if (engine.startSlowMo()) {
+                        vm.setRecording(true)
                     }
-                    vm.postMessage("Saved $done of $total photos")
-                } catch (e: CancellationException) {
-                    vm.postMessage("Stopped after $done of $total photos")
-                    throw e
                 } finally {
-                    count = 0
-                    seqTotal = 0
-                    seqDone = 0
+                    busy = false
                 }
             }
-        } else {
-            scope.launch {
-                var i = st.timer.seconds
-                while (i > 0) { count = i; delay(1000); i-- }
-                count = 0
+            st.mode == CaptureMode.VIDEO ->
+                engine.toggleRecording(audioGranted && st.recordAudio) { rec -> vm.setRecording(rec) }
+            sp == SpecialMode.RAW -> scope.launch {
+                busy = true
+                try {
+                    countdown(st.timer.seconds)
+                    engine.captureRaw(vm.state.value.shutterSound)
+                } finally {
+                    count = 0
+                    busy = false
+                }
+            }
+            sp == SpecialMode.LONG_EXPOSURE -> {
+                seqJob = scope.launch {
+                    val total = st.longExposure.frames
+                    try {
+                        countdown(st.timer.seconds)
+                        seqDone = 0
+                        seqTotal = total
+                        engine.takeLongExposure(total, vm.state.value.shutterSound) { seqDone = it }
+                    } catch (e: CancellationException) {
+                        vm.postMessage("Long exposure stopped. Nothing was saved.")
+                        throw e
+                    } finally {
+                        count = 0
+                        seqTotal = 0
+                        seqDone = 0
+                    }
+                }
+            }
+            st.drive != DriveMode.SINGLE && sp == SpecialMode.NONE -> {
+                seqJob = scope.launch {
+                    val burst = st.drive == DriveMode.BURST
+                    val total = if (burst) BURST_SHOTS else st.lapseFrames.count
+                    val gapMs = if (burst) 0L else st.lapseInterval.seconds * 1000L
+                    var done = 0
+                    try {
+                        countdown(st.timer.seconds)
+                        seqDone = 0
+                        seqTotal = total
+                        while (done < total) {
+                            val startedAt = SystemClock.elapsedRealtime()
+                            // Originals only: no Look or watermark copies, so a long run stays fast and light.
+                            val ok = engine.takePhotoAwait(!burst && vm.state.value.shutterSound, Look.OFF, null)
+                            if (!ok) break
+                            done++
+                            seqDone = done
+                            if (done < total && gapMs > 0) {
+                                val wait = gapMs - (SystemClock.elapsedRealtime() - startedAt)
+                                if (wait > 0) delay(wait)
+                            }
+                        }
+                        vm.postMessage("Saved $done of $total photos")
+                    } catch (e: CancellationException) {
+                        vm.postMessage("Stopped after $done of $total photos")
+                        throw e
+                    } finally {
+                        count = 0
+                        seqTotal = 0
+                        seqDone = 0
+                    }
+                }
+            }
+            else -> scope.launch {
+                countdown(st.timer.seconds)
                 val cur = vm.state.value
                 val wm = if (cur.watermarkOn && cur.watermarkText.isNotBlank()) cur.watermarkText else null
-                engine.takePhoto(cur.shutterSound, cur.look, wm) { }
+                engine.takePhoto(cur.shutterSound, cur.look, wm, cur.special.effect) { }
             }
+        }
+    }
+
+    /** Opens the newest capture in the phone's own Gallery app. Falls back to Fovea's own list if none can open it. */
+    fun openGallery() {
+        val item = latest
+        if (item == null) { onGallery(); return }
+        try {
+            ctx.startActivity(
+                Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            )
+        } catch (e: Exception) {
+            onGallery()
         }
     }
 
@@ -190,22 +256,30 @@ fun CameraScreen(
         onDispose {
             engine.cameraScreenVisible = false
             engine.unbind()
+            vm.setRecording(false)
         }
     }
     LaunchedEffect(Unit) { engine.events.collect { vm.postMessage(it) } }
     LaunchedEffect(Unit) { engine.volumeEvents.collect { shutter() } }
+    LaunchedEffect(Unit) { engine.specialFailed.collect { vm.setSpecial(SpecialMode.NONE) } }
     LaunchedEffect(s.message) { if (s.message != null) { delay(2600); vm.clearMessage() } }
     LaunchedEffect(saved, camGranted) {
-        latest = withContext(Dispatchers.IO) { MediaStoreHelper.recent(ctx, 1).firstOrNull()?.uri }
+        latest = withContext(Dispatchers.IO) { MediaStoreHelper.recent(ctx, 1).firstOrNull() }
     }
 
     val wantHist = UiFlag.HISTOGRAM in s.flags
-    val isVideo = s.mode == CaptureMode.VIDEO
-    LaunchedEffect(camGranted, s.frontCamera, isVideo, s.aspect, wantHist, s.jpegQuality, s.fastCapture, s.videoQuality) {
-        if (camGranted) engine.bind(
-            activity, previewView,
-            BindConfig(s.frontCamera, isVideo, s.aspect, s.flash, wantHist, s.jpegQuality.value, s.fastCapture, s.videoQuality)
-        )
+    val special = s.special
+    // isVideo = normal CameraX video. Slow motion and dual video are handled by their own paths.
+    val isVideo = s.mode == CaptureMode.VIDEO && special == SpecialMode.NONE
+    LaunchedEffect(camGranted, s.frontCamera, isVideo, s.aspect, wantHist, s.jpegQuality, s.fastCapture, s.videoQuality, special, rebindTick) {
+        if (camGranted) {
+            if (special == SpecialMode.DUAL_VIDEO) {
+                if (!engine.bindDual(activity, previewBack, previewFront)) vm.setSpecial(SpecialMode.NONE)
+            } else engine.bind(
+                activity, previewView,
+                BindConfig(s.frontCamera, isVideo, s.aspect, s.flash, wantHist, s.jpegQuality.value, s.fastCapture, s.videoQuality, special)
+            )
+        }
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
     // Keep the screen awake while a burst or time-lapse is running, otherwise the camera would close.
@@ -248,18 +322,19 @@ fun CameraScreen(
                     }
                 )
             } else {
-                Viewfinder(s, vm, engine, previewView, zoom, hist, count, seqDone, seqTotal)
+                Viewfinder(s, vm, engine, previewView, previewBack, previewFront, zoom, hist, count, seqDone, seqTotal)
             }
         }
         if (camGranted) {
             ZoomRow(caps, zoom) { engine.setZoom(it) }
-            if (s.mode == CaptureMode.PRO) ProPanel(s, caps, vm)
+            if (s.special == SpecialMode.DUAL_VIDEO) Unit
+            else if (s.mode == CaptureMode.PRO) ProPanel(s, caps, vm)
             else if (caps.evSupported) EvRow(s.ev, caps) { vm.setEv(it) }
         }
-        ModeRow(s, vm) { showMore = true }
-        CaptureBar(s, latest, camGranted, running = seqTotal > 0, onShutter = { shutter() }, onGallery = onGallery, onSwitch = { vm.switchCamera() })
+        ModeRow(s, caps, vm) { showMore = true }
+        CaptureBar(s, latest?.uri, camGranted, running = seqTotal > 0, onShutter = { shutter() }, onGallery = { openGallery() }, onSwitch = { vm.switchCamera() })
     }
-    if (showMore) MoreSheet(s, vm) { showMore = false }
+    if (showMore) MoreSheet(s, caps, vm) { showMore = false }
     if (showLooks) LookSheet(s.look, { vm.setLook(it) }) { showLooks = false }
 }
 
@@ -308,7 +383,7 @@ private fun TopToken(title: String, value: String, active: Boolean, enabled: Boo
 @Composable
 private fun Viewfinder(
     s: CameraUiState, vm: CameraViewModel, engine: CameraEngine, previewView: PreviewView,
-    zoom: Float, hist: IntArray?, count: Int, seqDone: Int, seqTotal: Int
+    previewBack: PreviewView, previewFront: PreviewView, zoom: Float, hist: IntArray?, count: Int, seqDone: Int, seqTotal: Int
 ) {
     var focus by remember { mutableStateOf<Offset?>(null) }
     var tick by remember { mutableIntStateOf(0) }
@@ -318,15 +393,24 @@ private fun Viewfinder(
         Modifier.aspectRatio(s.effectiveAspect().ratio).clip(RoundedCornerShape(10.dp))
             .pointerInput(Unit) {
                 detectTapGestures { pos ->
-                    focus = pos; tick++
-                    engine.focusAt(previewView, pos.x, pos.y)
+                    if (vm.state.value.special != SpecialMode.DUAL_VIDEO) {
+                        focus = pos; tick++
+                        engine.focusAt(previewView, pos.x, pos.y)
+                    }
                 }
             }
             .pointerInput(Unit) {
                 detectTransformGestures { _, _, z, _ -> if (z != 1f) engine.setZoom(engine.zoomRatio.value * z) }
             }
     ) {
-        AndroidView(factory = { previewView }, modifier = Modifier.matchParentSize())
+        if (s.special == SpecialMode.DUAL_VIDEO) {
+            Column(Modifier.matchParentSize()) {
+                AndroidView(factory = { detached(previewBack) }, modifier = Modifier.weight(1f).fillMaxWidth())
+                AndroidView(factory = { detached(previewFront) }, modifier = Modifier.weight(1f).fillMaxWidth())
+            }
+        } else {
+            AndroidView(factory = { detached(previewView) }, modifier = Modifier.matchParentSize())
+        }
         if (s.guide != GuideType.NONE) GuideOverlay(
             s.guide, Modifier.matchParentSize(),
             Color(s.guideColor.argb).copy(alpha = s.guideOpacity), s.guideThickness
@@ -349,16 +433,26 @@ private fun Viewfinder(
             Text("● REC", color = Fovea.Danger, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopCenter).padding(10.dp))
         }
-        if (s.mode != CaptureMode.VIDEO && (seqTotal > 0 || s.drive != DriveMode.SINGLE)) {
-            val label = when {
-                seqTotal > 0 -> "$seqDone / $seqTotal"
-                s.drive == DriveMode.BURST -> "BURST ×$BURST_SHOTS"
-                else -> "LAPSE ${s.lapseInterval.label} ×${s.lapseFrames.count}"
-            }
+        val tag: String? = when {
+            seqTotal > 0 -> "$seqDone / $seqTotal"
+            s.special != SpecialMode.NONE -> s.special.label.uppercase()
+            s.mode != CaptureMode.VIDEO && s.drive == DriveMode.BURST -> "BURST ×$BURST_SHOTS"
+            s.mode != CaptureMode.VIDEO && s.drive == DriveMode.TIMELAPSE -> "LAPSE ${s.lapseInterval.label} ×${s.lapseFrames.count}"
+            else -> null
+        }
+        if (tag != null) {
             Text(
-                label, color = Fovea.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                tag, color = Fovea.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
                     .clip(RoundedCornerShape(6.dp)).background(Fovea.Black.copy(alpha = 0.55f)).padding(horizontal = 8.dp, vertical = 3.dp)
+            )
+        }
+        if (s.special == SpecialMode.SLOW_MOTION && s.recording) {
+            Text(
+                "Slow motion is recording. The preview is paused. Press the shutter to stop.",
+                color = Fovea.Text, fontSize = 13.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                    .clip(RoundedCornerShape(8.dp)).background(Fovea.Black.copy(alpha = 0.7f)).padding(12.dp)
             )
         }
         if (count > 0) {
@@ -373,6 +467,12 @@ private fun Viewfinder(
             )
         }
     }
+}
+
+/** A PreviewView can only have one parent. This frees it before it is placed again. */
+private fun detached(v: PreviewView): PreviewView {
+    (v.parent as? android.view.ViewGroup)?.removeView(v)
+    return v
 }
 
 @Composable
@@ -501,12 +601,18 @@ private fun ProToken(title: String, value: String, selected: Boolean, onClick: (
 }
 
 @Composable
-private fun ModeRow(s: CameraUiState, vm: CameraViewModel, onMore: () -> Unit) {
+private fun ModeRow(s: CameraUiState, caps: DeviceCaps, vm: CameraViewModel, onMore: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        ModeToken("PRO", s.mode == CaptureMode.PRO) { vm.setMode(CaptureMode.PRO) }
+        ModeToken("PRO", s.mode == CaptureMode.PRO && s.special == SpecialMode.NONE) { vm.setMode(CaptureMode.PRO) }
         ModeToken("VIDEO", s.mode == CaptureMode.VIDEO) { vm.setMode(CaptureMode.VIDEO) }
         ModeToken("PHOTO", s.mode == CaptureMode.PHOTO) { vm.setMode(CaptureMode.PHOTO) }
-        ModeToken("PORTRAIT", false, dim = true) { vm.postMessage("Portrait blur is planned for a later stage.") }
+        ModeToken("PORTRAIT", s.special == SpecialMode.PORTRAIT) {
+            when {
+                s.special == SpecialMode.PORTRAIT -> vm.setSpecial(SpecialMode.NONE)
+                SpecialMode.PORTRAIT.availableOn(caps) -> vm.setSpecial(SpecialMode.PORTRAIT)
+                else -> vm.postMessage("Portrait blur is not offered to apps by this phone's camera.")
+            }
+        }
         ModeToken("MORE", false, onClick = onMore)
     }
 }
@@ -566,14 +672,47 @@ private fun CaptureBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MoreSheet(s: CameraUiState, vm: CameraViewModel, onDismiss: () -> Unit) {
+private fun MoreSheet(s: CameraUiState, caps: DeviceCaps, vm: CameraViewModel, onDismiss: () -> Unit) {
     var editWatermark by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Fovea.Graphite, contentColor = Fovea.Text) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = Fovea.ScreenPadding).padding(bottom = 24.dp)) {
             Text("Capture tools", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Drive mode works in Photo and Pro. Burst and time-lapse take photos one after another and keep the originals only (no Look, no watermark). Press the shutter again to stop. Time-lapse saves a series of photos, not a video. Keep the app open while it runs.",
+                "Special modes: pick one. Pro, Video and Photo at the bottom switch back to normal. Modes marked N/A are not offered to apps by this phone's camera. Photos and videos are saved to your Gallery (Pictures/Fovea and Movies/Fovea).",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)
+            )
+            SpecialMode.values().filter { it != SpecialMode.NONE }.forEach { m ->
+                val ok = m.availableOn(caps)
+                SettingRow(
+                    m.label, m.blurb,
+                    onClick = {
+                        when {
+                            s.special == m -> vm.setSpecial(SpecialMode.NONE)
+                            ok -> vm.setSpecial(m)
+                            else -> vm.postMessage("${m.label} is not available on this camera.")
+                        }
+                        onDismiss()
+                    }
+                ) {
+                    when {
+                        s.special == m -> Icon(Icons.Filled.Check, "Selected", tint = Fovea.Accent)
+                        !ok -> UiOnlyTag("N/A")
+                        else -> Unit
+                    }
+                }
+            }
+            if (s.special == SpecialMode.LONG_EXPOSURE) {
+                SettingRow("Long exposure length", "How many photos are blended. Keep the phone steady", onClick = { vm.cycleLongExposure() }) {
+                    Text(s.longExposure.label, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Text(
+                "DRIVE MODE (normal camera only)", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 20.dp, bottom = 6.dp)
+            )
+            Text(
+                "Burst and time-lapse take photos one after another and keep the originals only (no Look, no watermark). Press the shutter again to stop. Time-lapse saves a series of photos, not a video. Keep the app open while it runs.",
+                color = Fovea.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp)
             )
             SettingRow("Drive mode", "Single photo, a burst of $BURST_SHOTS, or time-lapse", onClick = { vm.cycleDrive() }) {
                 Text(s.drive.label, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
@@ -595,12 +734,7 @@ private fun MoreSheet(s: CameraUiState, vm: CameraViewModel, onDismiss: () -> Un
                 "NOT BUILT YET", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 20.dp, bottom = 6.dp)
             )
-            listOf(
-                "HDR", "Night", "Portrait blur", "Panorama", "Slow motion", "Long exposure", "Documents",
-                "Ultra HD", "Dual video", "Tilt-shift", "RAW / DNG capture"
-            ).forEach { name ->
-                SettingRow(name) { UiOnlyTag("PLANNED") }
-            }
+            SettingRow("Panorama") { UiOnlyTag("PLANNED") }
         }
     }
     if (editWatermark) {

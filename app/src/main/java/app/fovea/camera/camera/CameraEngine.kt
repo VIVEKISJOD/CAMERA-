@@ -1,5 +1,6 @@
 package app.fovea.camera.camera
 
+import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
@@ -7,6 +8,7 @@ import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.media.MediaActionSound
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -15,6 +17,12 @@ import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.Camera
+import androidx.camera.core.ConcurrentCamera
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
@@ -39,11 +47,16 @@ import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.AwbOption
 import app.fovea.camera.state.FlashMode
 import app.fovea.camera.state.Look
+import app.fovea.camera.state.PhotoEffect
+import app.fovea.camera.state.SpecialMode
 import app.fovea.camera.state.VideoQuality
 import android.os.Environment
 import android.os.StatFs
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -75,6 +88,11 @@ class CameraEngine(private val context: Context) {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
     private var lastHistogramAt = 0L
+    private val extras = Camera2Extras(context)
+    private var extensions: ExtensionsManager? = null
+    private var dualBack: VideoCapture<Recorder>? = null
+    private var dualFront: VideoCapture<Recorder>? = null
+    private val dualRecordings = mutableListOf<Recording>()
 
     val caps = MutableStateFlow(DeviceCaps())
     val zoomRatio = MutableStateFlow(1f)
@@ -83,6 +101,11 @@ class CameraEngine(private val context: Context) {
     val lastSaved = MutableStateFlow<Uri?>(null)
     val events = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val volumeEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Bumped when the screen must bind the camera again (after RAW or slow motion used the camera directly). */
+    val rebind = MutableStateFlow(0)
+    /** Emitted when a special mode could not start, so the screen goes back to the normal camera. */
+    val specialFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val slowMoActive: Boolean get() = extras.slowActive
 
     @Volatile var cameraScreenVisible = false
 
@@ -92,16 +115,46 @@ class CameraEngine(private val context: Context) {
         }, mainExecutor)
     }
 
+    private suspend fun extensionsManager(p: ProcessCameraProvider): ExtensionsManager? {
+        extensions?.let { return it }
+        return try {
+            ExtensionsManager.getInstanceAsync(context, p).await().also { extensions = it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    /** Highest photo resolution CameraX can give. The high-resolution switch is looked up at run time, so an older CameraX cannot break the build. */
+    private fun ultraSelector(base: AspectRatioStrategy): ResolutionSelector {
+        val b = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(base)
+            .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+        try {
+            val method = ResolutionSelector.Builder::class.java.getMethod("setAllowedResolutionMode", Int::class.javaPrimitiveType)
+            val flag = ResolutionSelector::class.java.getField("PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE").getInt(null)
+            method.invoke(b, flag)
+        } catch (e: Throwable) {
+            // This CameraX build has no high-resolution mode: the highest normal resolution is used.
+        }
+        return b.build()
+    }
+
     /** Must be called from the main thread (LaunchedEffect does this). */
     suspend fun bind(owner: LifecycleOwner, view: PreviewView, cfg: BindConfig) {
         try {
             val p = provider ?: ProcessCameraProvider.getInstance(context).await().also { provider = it }
             recording?.stop()
             recording = null
+            stopDual()
             p.unbindAll()
 
             val front = if (cfg.front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-            val strategy = if (cfg.aspect == AspectOption.R169 || cfg.video)
+            val special = cfg.special
+            // Slow motion shows a live preview only. The recording itself is made by Camera2Extras.
+            val previewOnly = special == SpecialMode.SLOW_MOTION
+            val strategy = if (cfg.aspect == AspectOption.R169 || cfg.video || previewOnly)
                 AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
             else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
             val selector = ResolutionSelector.Builder().setAspectRatioStrategy(strategy).build()
@@ -110,7 +163,14 @@ class CameraEngine(private val context: Context) {
             preview.setSurfaceProvider(view.surfaceProvider)
             val useCases = mutableListOf<UseCase>(preview)
 
-            if (cfg.video) {
+            val em = extensionsManager(p)
+            var extMode = ExtensionMode.NONE
+
+            if (previewOnly) {
+                videoCapture = null
+                imageCapture = null
+                histogram.value = null
+            } else if (cfg.video) {
                 val wanted = when (cfg.videoQuality) {
                     VideoQuality.UHD -> Quality.UHD
                     VideoQuality.FHD -> Quality.FHD
@@ -126,8 +186,19 @@ class CameraEngine(private val context: Context) {
                 imageCapture = null
                 useCases += vc
             } else {
+                extMode = when (special) {
+                    SpecialMode.HDR -> ExtensionMode.HDR
+                    SpecialMode.NIGHT -> ExtensionMode.NIGHT
+                    SpecialMode.PORTRAIT -> ExtensionMode.BOKEH
+                    else -> ExtensionMode.NONE
+                }
+                if (extMode != ExtensionMode.NONE && (em == null || !em.isExtensionAvailable(front, extMode))) {
+                    events.tryEmit("${special.label} is not offered to apps by this phone's camera.")
+                    specialFailed.tryEmit(Unit)
+                    extMode = ExtensionMode.NONE
+                }
                 val ic = ImageCapture.Builder()
-                    .setResolutionSelector(selector)
+                    .setResolutionSelector(if (special == SpecialMode.ULTRA_HD) ultraSelector(strategy) else selector)
                     .setCaptureMode(
                         if (cfg.fastCapture) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
                         else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
@@ -138,7 +209,8 @@ class CameraEngine(private val context: Context) {
                 imageCapture = ic
                 videoCapture = null
                 useCases += ic
-                if (cfg.histogram) {
+                // The live histogram is not combined with phone extensions (they allow fewer camera streams).
+                if (cfg.histogram && extMode == ExtensionMode.NONE) {
                     val analysis = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
@@ -147,10 +219,34 @@ class CameraEngine(private val context: Context) {
                 } else histogram.value = null
             }
 
-            val cam = p.bindToLifecycle(owner, front, *useCases.toTypedArray())
+            val extSelector = if (extMode != ExtensionMode.NONE && em != null)
+                em.getExtensionEnabledCameraSelector(front, extMode) else front
+            val cam = try {
+                p.bindToLifecycle(owner, extSelector, *useCases.toTypedArray())
+            } catch (e: Exception) {
+                if (extMode == ExtensionMode.NONE) throw e
+                events.tryEmit("This phone could not start ${special.label}, so the normal camera is used.")
+                specialFailed.tryEmit(Unit)
+                p.unbindAll()
+                p.bindToLifecycle(owner, front, *useCases.toTypedArray())
+            }
             camera = cam
             zoomRatio.value = 1f
-            caps.value = readCaps(cam, p)
+            val base = try { readCaps(cam, p) } catch (e: Exception) { caps.value }
+            var hdr = false
+            var night = false
+            var bokeh = false
+            if (em != null) {
+                try {
+                    hdr = em.isExtensionAvailable(front, ExtensionMode.HDR)
+                    night = em.isExtensionAvailable(front, ExtensionMode.NIGHT)
+                    bokeh = em.isExtensionAvailable(front, ExtensionMode.BOKEH)
+                } catch (e: Exception) { }
+            }
+            val dual = Build.VERSION.SDK_INT >= 30 && try {
+                p.availableConcurrentCameraInfos.isNotEmpty()
+            } catch (e: Throwable) { false }
+            caps.value = base.copy(extHdr = hdr, extNight = night, extBokeh = bokeh, dualCapable = dual)
             bindCount.value = bindCount.value + 1
         } catch (e: CancellationException) {
             throw e
@@ -159,11 +255,115 @@ class CameraEngine(private val context: Context) {
         }
     }
 
+    /** Dual video: front and rear camera together, each with its own preview and its own video file. Returns false if not possible. */
+    @SuppressLint("NewApi")
+    suspend fun bindDual(owner: LifecycleOwner, backView: PreviewView, frontView: PreviewView): Boolean {
+        if (Build.VERSION.SDK_INT < 30) {
+            events.tryEmit("Dual video needs Android 11 or newer.")
+            return false
+        }
+        try {
+            val p = provider ?: ProcessCameraProvider.getInstance(context).await().also { provider = it }
+            recording?.stop()
+            recording = null
+            stopDual()
+            p.unbindAll()
+            if (p.availableConcurrentCameraInfos.isEmpty()) {
+                events.tryEmit("This phone cannot use the front and rear camera together.")
+                return false
+            }
+            fun group(view: PreviewView): Pair<UseCaseGroup, VideoCapture<Recorder>> {
+                val pv = Preview.Builder().build()
+                pv.setSurfaceProvider(view.surfaceProvider)
+                val rec = Recorder.Builder()
+                    .setQualitySelector(
+                        QualitySelector.from(Quality.HD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+                    ).build()
+                val vc = VideoCapture.withOutput(rec)
+                return Pair(UseCaseGroup.Builder().addUseCase(pv).addUseCase(vc).build(), vc)
+            }
+            val back = group(backView)
+            val frontG = group(frontView)
+            p.bindToLifecycle(
+                listOf(
+                    ConcurrentCamera.SingleCameraConfig(CameraSelector.DEFAULT_BACK_CAMERA, back.first, owner),
+                    ConcurrentCamera.SingleCameraConfig(CameraSelector.DEFAULT_FRONT_CAMERA, frontG.first, owner)
+                )
+            )
+            dualBack = back.second
+            dualFront = frontG.second
+            camera = null
+            imageCapture = null
+            videoCapture = null
+            histogram.value = null
+            bindCount.value = bindCount.value + 1
+            return true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            events.tryEmit("Dual video could not start: ${e.message ?: e.javaClass.simpleName}")
+            return false
+        }
+    }
+
+    private fun stopDual() {
+        try { dualRecordings.forEach { it.stop() } } catch (e: Exception) { }
+        dualRecordings.clear()
+        dualBack = null
+        dualFront = null
+    }
+
+    fun toggleDualRecording(withAudio: Boolean, onState: (Boolean) -> Unit) {
+        val back = dualBack
+        val front = dualFront
+        if (back == null || front == null) { events.tryEmit("Dual video is not ready yet."); return }
+        if (dualRecordings.isNotEmpty()) { dualRecordings.toList().forEach { it.stop() }; return }
+        if (freeBytes() < MIN_FREE_BYTES * 6) { events.tryEmit("Storage is almost full. Free some space to record video."); return }
+        val name = stamp()
+        var remaining = 2
+        fun start(vc: VideoCapture<Recorder>, suffix: String, audio: Boolean): Recording {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "FOVEA_${name}_$suffix")
+                put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Movies/Fovea")
+            }
+            val out = MediaStoreOutputOptions.Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .setContentValues(values).build()
+            var pending = vc.output.prepareRecording(context, out)
+            if (audio) pending = pending.withAudioEnabled()
+            return pending.start(mainExecutor) { ev ->
+                when (ev) {
+                    is VideoRecordEvent.Start -> {
+                        if (suffix == "BACK") onState(true)
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        remaining--
+                        val kept = !ev.hasError() || ev.error == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED ||
+                            ev.error == VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE ||
+                            ev.error == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE
+                        if (kept) lastSaved.value = ev.outputResults.outputUri
+                        else events.tryEmit("The $suffix video could not be saved (error ${ev.error}).")
+                        if (remaining <= 0) {
+                            dualRecordings.clear()
+                            onState(false)
+                            events.tryEmit("Dual video saved as two files (BACK and FRONT).")
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        dualRecordings += start(back, "BACK", withAudio)
+        dualRecordings += start(front, "FRONT", false)
+    }
+
     /** Called when the camera screen leaves the screen: stops any recording and releases the camera. */
     fun unbind() {
         try {
             recording?.stop()
             recording = null
+            stopDual()
+            extras.stopSlowMo()
             provider?.unbindAll()
         } catch (e: Exception) {
             // Releasing must never crash the app.
@@ -228,7 +428,11 @@ class CameraEngine(private val context: Context) {
             rawCapable = raw,
             hardwareLevel = levelName,
             hasFront = hasFront,
-            hasBack = hasBack
+            hasBack = hasBack,
+            cameraId = c2.cameraId,
+            sensorOrientation = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90,
+            highSpeed = c2.getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.highSpeedVideoSizes?.isNotEmpty() == true
         )
     }
 
@@ -304,7 +508,7 @@ class CameraEngine(private val context: Context) {
 
     private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 
-    fun takePhoto(playSound: Boolean, look: Look, watermark: String?, onDone: (Boolean) -> Unit) {
+    fun takePhoto(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect, onDone: (Boolean) -> Unit) {
         val ic = imageCapture
         if (ic == null) { events.tryEmit("Camera is not ready yet."); onDone(false); return }
         if (freeBytes() < MIN_FREE_BYTES) { events.tryEmit("Storage is almost full. Free some space to take photos."); onDone(false); return }
@@ -322,16 +526,20 @@ class CameraEngine(private val context: Context) {
                 val src = r.savedUri
                 lastSaved.value = src
                 onDone(true)
-                if ((look != Look.OFF || watermark != null) && src != null) {
-                    val what = when {
-                        look != Look.OFF && watermark != null -> "${look.label} + watermark"
-                        look != Look.OFF -> look.label
-                        else -> "Watermark"
-                    }
+                if ((look != Look.OFF || watermark != null || effect != PhotoEffect.NONE) && src != null) {
+                    val what = listOfNotNull(
+                        when (effect) {
+                            PhotoEffect.TILT_SHIFT -> "Tilt-shift"
+                            PhotoEffect.DOCUMENT -> "Document"
+                            PhotoEffect.NONE -> null
+                        },
+                        if (look != Look.OFF && effect != PhotoEffect.DOCUMENT) look.label else null,
+                        if (watermark != null) "watermark" else null
+                    ).joinToString(" + ")
                     try {
                         lookExecutor.execute {
                             try {
-                                val copy = LookProcessor.createLookCopy(context, src, look, watermark)
+                                val copy = LookProcessor.createLookCopy(context, src, look, watermark, effect)
                                 if (copy != null) {
                                     lastSaved.value = copy
                                     events.tryEmit("Saved original + $what copy")
@@ -353,10 +561,126 @@ class CameraEngine(private val context: Context) {
     }
 
     /** Takes one photo and waits until it is saved. Returns false if it failed (message already posted). */
-    suspend fun takePhotoAwait(playSound: Boolean, look: Look, watermark: String?): Boolean =
+    suspend fun takePhotoAwait(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect = PhotoEffect.NONE): Boolean =
         suspendCancellableCoroutine { cont ->
-            takePhoto(playSound, look, watermark) { ok -> if (cont.isActive) cont.resume(ok) }
+            takePhoto(playSound, look, watermark, effect) { ok -> if (cont.isActive) cont.resume(ok) }
         }
+
+    private suspend fun captureFrame(): RawFrame? = suspendCancellableCoroutine { c ->
+        val ic = imageCapture
+        if (ic == null) {
+            c.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        ic.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                try {
+                    val buf = image.planes[0].buffer
+                    val bytes = ByteArray(buf.remaining())
+                    buf.get(bytes)
+                    if (c.isActive) c.resume(RawFrame(bytes, image.imageInfo.rotationDegrees))
+                } catch (e: Exception) {
+                    if (c.isActive) c.resume(null)
+                } finally {
+                    image.close()
+                }
+            }
+            override fun onError(exception: ImageCaptureException) {
+                if (c.isActive) c.resume(null)
+            }
+        })
+    }
+
+    /** Long exposure: takes [frames] photos one after another and blends them into one smooth picture. */
+    suspend fun takeLongExposure(frames: Int, playSound: Boolean, onProgress: (Int) -> Unit): Uri? {
+        if (imageCapture == null) { events.tryEmit("Camera is not ready yet."); return null }
+        if (freeBytes() < MIN_FREE_BYTES) { events.tryEmit("Storage is almost full. Free some space to take photos."); return null }
+        if (playSound) sound.play(MediaActionSound.SHUTTER_CLICK)
+        val stack = LongExposureStack()
+        try {
+            var used = 0
+            var tries = 0
+            while (used < frames && tries < frames + 4) {
+                tries++
+                val f = captureFrame() ?: continue
+                val ok = withContext(Dispatchers.Default) {
+                    try { stack.add(f) } catch (e: OutOfMemoryError) { false } catch (e: Exception) { false }
+                }
+                if (ok) { used++; onProgress(used) }
+            }
+            if (stack.frames < 2) {
+                events.tryEmit("Long exposure needs at least 2 photos. Nothing was saved.")
+                return null
+            }
+            val bmp = withContext(Dispatchers.Default) {
+                try { stack.result() } catch (e: OutOfMemoryError) { null }
+            }
+            if (bmp == null) { events.tryEmit("Long exposure ran out of memory. Nothing was saved."); return null }
+            val uri = withContext(Dispatchers.IO) {
+                try { LongExposureStack.save(context, bmp, "FOVEA_${stamp()}_LONGEXP") } finally { bmp.recycle() }
+            }
+            if (uri != null) {
+                lastSaved.value = uri
+                events.tryEmit("Long exposure saved (${stack.frames} photos blended)")
+            } else events.tryEmit("Long exposure could not be saved.")
+            return uri
+        } finally {
+            stack.clear()
+        }
+    }
+
+    /** RAW (DNG): CameraX is released for a moment, the photo is taken directly, then the camera screen binds again. */
+    suspend fun captureRaw(playSound: Boolean): Uri? {
+        val c = caps.value
+        if (c.cameraId.isBlank() || !c.rawCapable) { events.tryEmit("This camera cannot take RAW photos."); return null }
+        if (freeBytes() < MIN_FREE_BYTES * 2) { events.tryEmit("Storage is almost full. Free some space to take photos."); return null }
+        unbind()
+        delay(300)
+        if (playSound) sound.play(MediaActionSound.SHUTTER_CLICK)
+        try {
+            val uri = extras.captureDng(c.cameraId, c.sensorOrientation)
+            lastSaved.value = uri
+            events.tryEmit("Saved RAW (DNG) photo")
+            return uri
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            events.tryEmit("RAW photo failed: ${e.message ?: e.javaClass.simpleName}")
+            return null
+        } finally {
+            rebind.value = rebind.value + 1
+        }
+    }
+
+    /** Slow motion: CameraX is released, high-speed recording starts directly on the camera. Returns true if recording. */
+    suspend fun startSlowMo(): Boolean {
+        val c = caps.value
+        if (c.cameraId.isBlank() || !c.highSpeed) { events.tryEmit("This camera does not offer high-speed video to apps."); return false }
+        if (freeBytes() < MIN_FREE_BYTES * 8) { events.tryEmit("Storage is almost full. Free some space to record video."); return false }
+        unbind()
+        delay(300)
+        try {
+            val fps = extras.startSlowMo(c.cameraId, c.sensorOrientation)
+            events.tryEmit("Slow motion recording at $fps fps (no sound). The preview is paused.")
+            return true
+        } catch (e: CancellationException) {
+            rebind.value = rebind.value + 1
+            throw e
+        } catch (e: Exception) {
+            events.tryEmit("Slow motion failed: ${e.message ?: e.javaClass.simpleName}")
+            rebind.value = rebind.value + 1
+            return false
+        }
+    }
+
+    fun stopSlowMo() {
+        val uri = extras.stopSlowMo()
+        if (uri != null) {
+            lastSaved.value = uri
+            events.tryEmit("Slow motion saved. It is a high-frame-rate video: use your Gallery's slow-motion or speed tool to see it slowed down.")
+        } else events.tryEmit("Slow motion video could not be saved.")
+        rebind.value = rebind.value + 1
+    }
 
     fun toggleRecording(withAudio: Boolean, onState: (Boolean) -> Unit) {
         val vc = videoCapture
@@ -442,6 +766,8 @@ class CameraEngine(private val context: Context) {
 
     fun release() {
         recording?.stop()
+        stopDual()
+        extras.release()
         provider?.unbindAll()
         sound.release()
         analysisExecutor.shutdown()

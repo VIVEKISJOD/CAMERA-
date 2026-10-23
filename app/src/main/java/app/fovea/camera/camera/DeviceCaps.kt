@@ -3,6 +3,7 @@ package app.fovea.camera.camera
 import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.AwbOption
 import app.fovea.camera.state.FlashMode
+import app.fovea.camera.state.SpecialMode
 import app.fovea.camera.state.VideoQuality
 
 /** What the active camera really reports. Nothing here is assumed. */
@@ -25,7 +26,15 @@ data class DeviceCaps(
     val rawCapable: Boolean = false,
     val hardwareLevel: String = "Unknown",
     val hasFront: Boolean = false,
-    val hasBack: Boolean = false
+    val hasBack: Boolean = false,
+    // Stage 6: what this camera can really do for the special modes.
+    val cameraId: String = "",
+    val sensorOrientation: Int = 90,
+    val highSpeed: Boolean = false,
+    val extHdr: Boolean = false,
+    val extNight: Boolean = false,
+    val extBokeh: Boolean = false,
+    val dualCapable: Boolean = false
 ) {
     val evSupported: Boolean get() = evStep > 0f && evMax > evMin
     val isoSupported: Boolean get() = manualSensor && isoMax > isoMin && shutterMaxNs > shutterMinNs
@@ -39,8 +48,21 @@ data class BindConfig(
     val histogram: Boolean,
     val jpegQuality: Int = 100,
     val fastCapture: Boolean = false,
-    val videoQuality: VideoQuality = VideoQuality.FHD
+    val videoQuality: VideoQuality = VideoQuality.FHD,
+    val special: SpecialMode = SpecialMode.NONE
 )
+
+/** True when the active camera can do this special mode. Nothing is assumed: it comes from the camera. */
+fun SpecialMode.availableOn(c: DeviceCaps): Boolean = when (this) {
+    SpecialMode.NONE, SpecialMode.TILT_SHIFT, SpecialMode.DOCUMENTS,
+    SpecialMode.ULTRA_HD, SpecialMode.LONG_EXPOSURE -> true
+    SpecialMode.HDR -> c.extHdr
+    SpecialMode.NIGHT -> c.extNight
+    SpecialMode.PORTRAIT -> c.extBokeh
+    SpecialMode.RAW -> c.rawCapable
+    SpecialMode.SLOW_MOTION -> c.highSpeed
+    SpecialMode.DUAL_VIDEO -> c.dualCapable
+}
 
 data class ManualSettings(
     val exposureManual: Boolean,

@@ -1,5 +1,7 @@
 package app.fovea.camera
 
+import app.fovea.camera.camera.DeviceCaps
+import app.fovea.camera.camera.availableOn
 import app.fovea.camera.state.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -250,5 +252,79 @@ class Stage5ModesTest {
         // Applying saved settings must not touch the current drive mode, and saving has no drive field.
         assertEquals(DriveMode.BURST, vm.state.value.drive)
         assertEquals(PersistedSettings(), CameraViewModel().state.value.toPersisted())
+    }
+}
+
+class Stage6ModesTest {
+    @Test fun startsNormal() = assertEquals(SpecialMode.NONE, CameraViewModel().state.value.special)
+
+    @Test fun videoSpecialModesSwitchToVideo() {
+        val vm = CameraViewModel()
+        vm.setSpecial(SpecialMode.SLOW_MOTION)
+        assertEquals(CaptureMode.VIDEO, vm.state.value.mode)
+        vm.setSpecial(SpecialMode.DUAL_VIDEO)
+        assertEquals(CaptureMode.VIDEO, vm.state.value.mode)
+    }
+
+    @Test fun photoSpecialLeavesVideoMode() {
+        val vm = CameraViewModel(); vm.setMode(CaptureMode.VIDEO)
+        vm.setSpecial(SpecialMode.HDR)
+        assertEquals(CaptureMode.PHOTO, vm.state.value.mode)
+        assertEquals(SpecialMode.HDR, vm.state.value.special)
+    }
+
+    @Test fun photoSpecialKeepsProMode() {
+        val vm = CameraViewModel(); vm.setMode(CaptureMode.PRO)
+        vm.setSpecial(SpecialMode.ULTRA_HD)
+        assertEquals(CaptureMode.PRO, vm.state.value.mode)
+    }
+
+    @Test fun pickingAModeLeavesSpecial() {
+        val vm = CameraViewModel(); vm.setSpecial(SpecialMode.NIGHT)
+        vm.setMode(CaptureMode.PHOTO)
+        assertEquals(SpecialMode.NONE, vm.state.value.special)
+    }
+
+    @Test fun cannotChangeSpecialWhileRecording() {
+        val vm = CameraViewModel(); vm.setSpecial(SpecialMode.SLOW_MOTION); vm.setRecording(true)
+        vm.setSpecial(SpecialMode.NONE)
+        assertEquals(SpecialMode.SLOW_MOTION, vm.state.value.special)
+    }
+
+    @Test fun effectsMapToTheRightPhotoEffect() {
+        assertEquals(PhotoEffect.TILT_SHIFT, SpecialMode.TILT_SHIFT.effect)
+        assertEquals(PhotoEffect.DOCUMENT, SpecialMode.DOCUMENTS.effect)
+        assertEquals(PhotoEffect.NONE, SpecialMode.HDR.effect)
+    }
+
+    @Test fun onlySlowMotionAndDualAreVideoModes() {
+        val video = SpecialMode.values().filter { it.video }.toSet()
+        assertEquals(setOf(SpecialMode.SLOW_MOTION, SpecialMode.DUAL_VIDEO), video)
+    }
+
+    @Test fun availabilityComesFromTheCamera() {
+        val none = DeviceCaps()
+        assertFalse(SpecialMode.HDR.availableOn(none))
+        assertFalse(SpecialMode.RAW.availableOn(none))
+        assertFalse(SpecialMode.SLOW_MOTION.availableOn(none))
+        assertFalse(SpecialMode.DUAL_VIDEO.availableOn(none))
+        assertTrue(SpecialMode.TILT_SHIFT.availableOn(none))
+        val full = none.copy(extHdr = true, extNight = true, extBokeh = true, rawCapable = true, highSpeed = true, dualCapable = true)
+        SpecialMode.values().forEach { assertTrue(it.availableOn(full)) }
+    }
+
+    @Test fun longExposureLengthCyclesAndWraps() {
+        val vm = CameraViewModel()
+        val seen = mutableSetOf(vm.state.value.longExposure)
+        repeat(LongExposureLength.values().size) { vm.cycleLongExposure(); seen += vm.state.value.longExposure }
+        assertEquals(LongExposureLength.values().toSet(), seen)
+        assertTrue(LongExposureLength.values().all { it.frames >= 2 })
+    }
+
+    @Test fun specialModeIsNeverSaved() {
+        val vm = CameraViewModel(); vm.setSpecial(SpecialMode.NIGHT)
+        vm.restoreDefaults()
+        // Saved settings have no special mode field, so the camera always starts normal.
+        assertEquals(PersistedSettings(), vm.state.value.toPersisted().copy(lastMode = CaptureMode.PHOTO, lastFront = false))
     }
 }
