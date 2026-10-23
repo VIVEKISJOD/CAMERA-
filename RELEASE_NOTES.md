@@ -1,1 +1,1 @@
-Stage 7: better photo quality (biggest size, histogram no longer shrinks photos), one photo when watermark is on, brighter and sharper slow motion, photos open in Gallery or Google Photos, new Fovea app icon. Shows the saved photo size after each shot.
+Stage 8: highlight protection (windows and lights burn out less), better tap-to-focus with a clear message when focus fails, plus Stage 7: better photo quality, one photo when watermark is on, brighter slow motion, Gallery/Google Photos opening, new app icon.

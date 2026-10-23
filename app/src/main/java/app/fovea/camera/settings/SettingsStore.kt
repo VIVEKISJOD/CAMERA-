@@ -33,7 +33,8 @@ class SettingsStore(context: Context) {
             reduceMotion = p.getBoolean("reduceMotion", d.reduceMotion),
             largeText = p.getBoolean("largeText", d.largeText),
             watermarkOn = p.getBoolean("watermarkOn", d.watermarkOn),
-            watermarkText = (p.getString("watermarkText", d.watermarkText) ?: d.watermarkText).take(40)
+            watermarkText = (p.getString("watermarkText", d.watermarkText) ?: d.watermarkText).take(40),
+            highlightGuard = p.getBoolean("highlightGuard", d.highlightGuard)
         )
     }
 
@@ -61,6 +62,7 @@ class SettingsStore(context: Context) {
             .putBoolean("largeText", s.largeText)
             .putBoolean("watermarkOn", s.watermarkOn)
             .putString("watermarkText", s.watermarkText)
+            .putBoolean("highlightGuard", s.highlightGuard)
             .apply()
     }
 }

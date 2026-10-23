@@ -80,6 +80,7 @@ data class PersistedSettings(
     val guide: GuideType = GuideType.THIRDS,
     val aspect: AspectOption = AspectOption.R43,
     val histogram: Boolean = false,
+    val highlightGuard: Boolean = true,
     val haptics: Boolean = true,
     val shutterSound: Boolean = true,
     val volumeShutter: Boolean = false,
@@ -134,6 +135,7 @@ data class CameraUiState(
     val largeText: Boolean = false,
     val watermarkOn: Boolean = false,
     val watermarkText: String = "Fovea",
+    val highlightGuard: Boolean = true,
     // Not saved: the camera always starts in single-photo mode so a burst never starts by surprise.
     val drive: DriveMode = DriveMode.SINGLE,
     val special: SpecialMode = SpecialMode.NONE,
@@ -157,7 +159,7 @@ fun CameraUiState.toPersisted() = PersistedSettings(
     jpegQuality = jpegQuality, fastCapture = fastCapture, videoQuality = videoQuality, recordAudio = recordAudio,
     guideColor = guideColor, guideOpacity = guideOpacity, guideThickness = guideThickness,
     reduceMotion = reduceMotion, largeText = largeText,
-    watermarkOn = watermarkOn, watermarkText = watermarkText
+    watermarkOn = watermarkOn, watermarkText = watermarkText, highlightGuard = highlightGuard
 )
 
 fun CameraUiState.visiblePresets(): List<Preset> {

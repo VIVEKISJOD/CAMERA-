@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 8. */
+/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 9. */
 class CameraViewModel : ViewModel() {
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
@@ -75,7 +75,8 @@ class CameraViewModel : ViewModel() {
             videoQuality = p.videoQuality, recordAudio = p.recordAudio,
             guideColor = p.guideColor, guideOpacity = p.guideOpacity, guideThickness = p.guideThickness,
             reduceMotion = p.reduceMotion, largeText = p.largeText,
-            watermarkOn = p.watermarkOn, watermarkText = p.watermarkText
+            watermarkOn = p.watermarkOn, watermarkText = p.watermarkText,
+            highlightGuard = p.highlightGuard
         )
     }
 
@@ -91,6 +92,7 @@ class CameraViewModel : ViewModel() {
     fun cycleJpegQuality() = change { copy(jpegQuality = next(jpegQuality)) }
     fun cycleVideoQuality() = change { copy(videoQuality = next(videoQuality)) }
     fun setFastCapture(v: Boolean) = change { copy(fastCapture = v) }
+    fun setHighlightGuard(v: Boolean) = change { copy(highlightGuard = v) }
     fun setRecordAudio(v: Boolean) = change { copy(recordAudio = v) }
     fun setGuideColor(c: GuideColor) = change { copy(guideColor = c) }
     fun setGuideOpacity(v: Float) = change { copy(guideOpacity = v.coerceIn(0.2f, 1f)) }

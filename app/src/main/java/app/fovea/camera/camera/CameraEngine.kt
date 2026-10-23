@@ -105,6 +105,12 @@ class CameraEngine(private val context: Context) {
     val specialFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val slowMoActive: Boolean get() = extras.slowActive
 
+    // Exposure the owner asked for (EV slider) plus a small automatic reduction when highlights burn out.
+    private var userEv = 0f
+    private var guardEv = 0f
+    private var guardLastChangeAt = 0L
+    private var guardCalmCount = 0
+
     @Volatile var cameraScreenVisible = false
 
     private suspend fun <T> ListenableFuture<T>.await(): T = suspendCancellableCoroutine { c ->
@@ -230,6 +236,8 @@ class CameraEngine(private val context: Context) {
             }
             camera = cam
             zoomRatio.value = 1f
+            guardEv = 0f
+            guardCalmCount = 0
             val base = try { readCaps(cam, p) } catch (e: Exception) { caps.value }
             var hdr = false
             var night = false
@@ -455,15 +463,42 @@ class CameraEngine(private val context: Context) {
 
     fun focusAt(view: PreviewView, x: Float, y: Float) {
         val point = view.meteringPointFactory.createPoint(x, y)
-        camera?.cameraControl?.startFocusAndMetering(FocusMeteringAction.Builder(point).build())
+        // Focus and brightness follow the tapped spot; white balance is left alone so colors do not jump.
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+            .setAutoCancelDuration(4, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        val future = camera?.cameraControl?.startFocusAndMetering(action) ?: return
+        future.addListener({
+            try {
+                if (!future.get().isFocusSuccessful) {
+                    events.tryEmit("Could not focus there. Step back a little, or tap a spot with more detail.")
+                }
+            } catch (e: Exception) {
+                // Focus was cancelled by a newer tap or by closing the camera: nothing to tell the owner.
+            }
+        }, mainExecutor)
     }
 
     fun setEv(stops: Float) {
+        userEv = stops
+        applyEv()
+    }
+
+    private fun applyEv() {
         val c = caps.value
         if (!c.evSupported) return
         val lo = (c.evMin / c.evStep).roundToInt()
         val hi = (c.evMax / c.evStep).roundToInt()
-        camera?.cameraControl?.setExposureCompensationIndex((stops / c.evStep).roundToInt().coerceIn(lo, hi))
+        camera?.cameraControl?.setExposureCompensationIndex(((userEv + guardEv) / c.evStep).roundToInt().coerceIn(lo, hi))
+    }
+
+    /** Turns the automatic highlight reduction off and gives the exposure back to the EV slider. */
+    fun resetHighlightGuard() {
+        if (guardEv != 0f) {
+            guardEv = 0f
+            guardCalmCount = 0
+            applyEv()
+        }
     }
 
     fun applyManual(m: ManualSettings) {
@@ -755,8 +790,12 @@ class CameraEngine(private val context: Context) {
         else -> "Video could not be saved (error $code)."
     }
 
-    /** Live histogram from the preview picture. Call from the main thread a few times per second. */
-    fun sampleHistogram(view: PreviewView) {
+    /**
+     * Reads the preview picture a few times per second (main thread). Feeds the live histogram and, if [guard] is on,
+     * the highlight protection: when many pixels are burnt out (windows, lights) the exposure is lowered by up to
+     * 1.5 stops in small steps, and given back slowly when the scene calms down.
+     */
+    fun sampleHistogram(view: PreviewView, wantHistogram: Boolean, guard: Boolean) {
         val grabbed: Bitmap? = try { view.bitmap } catch (e: Throwable) { null }
         val bmp = grabbed ?: return
         try {
@@ -764,15 +803,37 @@ class CameraEngine(private val context: Context) {
             val px = IntArray(64 * 64)
             small.getPixels(px, 0, 64, 0, 0, 64, 64)
             val bins = IntArray(64)
+            var burnt = 0
             for (c in px) {
                 val r = (c shr 16) and 0xFF
                 val g = (c shr 8) and 0xFF
                 val b = c and 0xFF
                 val y = (r * 299 + g * 587 + b * 114) / 1000
                 bins[y shr 2]++
+                if (y >= 245) burnt++
             }
             if (small !== bmp) small.recycle()
-            histogram.value = bins
+            if (wantHistogram) histogram.value = bins
+            if (guard) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val share = burnt / (64f * 64f)
+                if (now - guardLastChangeAt >= 700) {
+                    if (share > 0.06f && guardEv > -1.5f) {
+                        guardEv = (guardEv - 0.33f).coerceAtLeast(-1.5f)
+                        guardCalmCount = 0
+                        guardLastChangeAt = now
+                        applyEv()
+                    } else if (share < 0.01f && guardEv < 0f) {
+                        guardCalmCount++
+                        if (guardCalmCount >= 4) {
+                            guardEv = (guardEv + 0.33f).coerceAtMost(0f)
+                            guardCalmCount = 0
+                            guardLastChangeAt = now
+                            applyEv()
+                        }
+                    } else guardCalmCount = 0
+                }
+            }
         } finally {
             bmp.recycle()
         }

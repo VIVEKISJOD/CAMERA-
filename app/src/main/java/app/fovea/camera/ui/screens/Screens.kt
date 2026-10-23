@@ -108,6 +108,7 @@ fun SettingsScreen(
             ToggleRow("Record audio", "Needs microphone permission", s.recordAudio) { vm.setRecordAudio(it) }
             SectionLabel("Viewfinder")
             SettingRow("Gridlines", "${s.guide.label}. Color, opacity and thickness inside.", onClick = onGuides)
+            ToggleRow("Highlight protection", "Lowers brightness a little when windows or lights are burning out (photo mode)", s.highlightGuard) { vm.setHighlightGuard(it) }
             ToggleRow("Histogram", "Live brightness graph (photo and pro modes)", UiFlag.HISTOGRAM in s.flags) { vm.toggleFlag(UiFlag.HISTOGRAM) }
             SectionLabel("Capture feedback")
             ToggleRow("Shutter sound", "Plays a click when a photo is taken", s.shutterSound) { vm.setShutterSound(it) }
@@ -229,7 +230,7 @@ fun PresetLibraryScreen(vm: CameraViewModel, onBack: () -> Unit, onCreate: () ->
             StateView(
                 Icons.Filled.Star,
                 if (s.presets.isEmpty()) "No presets yet" else "No matches",
-                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 8." else "Try a different search.",
+                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 9." else "Try a different search.",
                 actionLabel = if (s.presets.isEmpty()) "Create preset" else null,
                 onAction = if (s.presets.isEmpty()) onCreate else null
             )
@@ -272,7 +273,7 @@ fun PresetCreateScreen(vm: CameraViewModel, onBack: () -> Unit) {
             Text("CATEGORY", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall)
             Row { PresetCategory.values().forEach { c -> FoveaChip(c.label, { cat = c }, selected = c == cat) } }
             Text(
-                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 8.",
+                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 9.",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall
             )
             FoveaChip("Save locally", { if (vm.addPreset(name, desc, cat)) onBack() }, selected = true, enabled = name.isNotBlank())
@@ -289,7 +290,7 @@ fun PresetCodeScreen(onBack: () -> Unit) {
         CodeCheck.TOO_SHORT -> "Too short. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.TOO_LONG -> "Too long. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.BAD_CHARACTERS -> "Only letters A–Z and digits 0–9 are allowed." to false
-        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 8." to true
+        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 9." to true
     }
     ScreenScaffold("Enter preset code", onBack) {
         Column(Modifier.padding(Fovea.ScreenPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {

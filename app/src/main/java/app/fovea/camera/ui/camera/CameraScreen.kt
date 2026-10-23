@@ -275,14 +275,20 @@ fun CameraScreen(
         }
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
-    // Live histogram: read from the preview picture a few times per second (no extra camera stream).
-    LaunchedEffect(wantHist, isVideo, bound, special, camGranted) {
-        if (wantHist && !isVideo && camGranted && special == SpecialMode.NONE) {
+    // Live histogram and highlight protection: read from the preview picture a few times per second (no extra camera stream).
+    val guardOn = s.highlightGuard && s.mode != CaptureMode.PRO
+    LaunchedEffect(wantHist, guardOn, isVideo, bound, special, camGranted) {
+        if ((wantHist || guardOn) && !isVideo && camGranted && special == SpecialMode.NONE) {
+            if (!wantHist) engine.histogram.value = null
+            if (!guardOn) engine.resetHighlightGuard()
             while (true) {
-                engine.sampleHistogram(previewView)
+                engine.sampleHistogram(previewView, wantHist, guardOn)
                 delay(300)
             }
-        } else engine.histogram.value = null
+        } else {
+            engine.histogram.value = null
+            engine.resetHighlightGuard()
+        }
     }
     // Keep the screen awake while a burst or time-lapse is running, otherwise the camera would close.
     LaunchedEffect(seqTotal) { previewView.keepScreenOn = seqTotal > 0 }

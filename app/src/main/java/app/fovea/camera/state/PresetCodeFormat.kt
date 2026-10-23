@@ -4,7 +4,7 @@ enum class CodeCheck { EMPTY, TOO_SHORT, TOO_LONG, BAD_CHARACTERS, WELL_FORMED }
 
 /**
  * Stage 1: format check only (length and alphabet). It does NOT decode anything.
- * The real binary encoding, versioning and validation are built in Stage 8.
+ * The real binary encoding, versioning and validation are built in Stage 9.
  */
 object PresetCodeFormat {
     const val LENGTH = 8
