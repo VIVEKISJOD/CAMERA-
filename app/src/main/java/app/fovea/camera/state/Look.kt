@@ -26,7 +26,7 @@ enum class Look(
     RICH_CONTRAST("Rich Contrast", "RICH", "Deep blacks, strong punch", saturation = 1.2f, contrast = 1.3f, brightness = -6f, vignette = 0.2f),
     SOFT_FADE("Soft Fade", "FADE", "Light, matte, gentle colors", saturation = 0.9f, contrast = 0.9f, brightness = 8f, warmth = 0.1f, fade = 0.4f),
     NATURAL_PLUS("Natural+", "NATURAL", "Slight boost, true-to-life", saturation = 1.12f, contrast = 1.06f, warmth = 0.05f),
-    // Added in Stage 3. APPEND ONLY: Stage 7 preset codes will refer to looks by position.
+    // Added in Stage 3. APPEND ONLY: Stage 8 preset codes will refer to looks by position.
     GOLDEN_HOUR("Golden Hour", "GOLDEN", "Warm sunset glow", saturation = 1.25f, contrast = 1.1f, brightness = 8f, warmth = 0.8f, tint = 0.05f, fade = 0.05f, vignette = 0.18f),
     CINEMATIC("Cinematic", "CINE", "Moody, filmic contrast", saturation = 1.05f, contrast = 1.22f, brightness = -4f, warmth = 0.2f, tint = -0.15f, fade = 0.15f, vignette = 0.28f),
     NOIR("Noir", "NOIR", "Black and white, deep contrast", saturation = 0f, contrast = 1.3f, brightness = -4f, vignette = 0.3f),

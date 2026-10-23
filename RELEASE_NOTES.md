@@ -1,1 +1,1 @@
-Stage 6: photos open in your phone Gallery. New modes: HDR, Night, Portrait blur (if your phone allows), Tilt-shift, Documents, Ultra HD, Long exposure, RAW/DNG, Slow motion, Dual video. Panorama is still planned.
+Stage 7: better photo quality (biggest size, histogram no longer shrinks photos), one photo when watermark is on, brighter and sharper slow motion, photos open in Gallery or Google Photos, new Fovea app icon. Shows the saved photo size after each shot.

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import app.fovea.camera.BuildConfig
 import app.fovea.camera.camera.CameraEngine
 import app.fovea.camera.camera.MediaItem
+import app.fovea.camera.camera.MediaOpener
 import app.fovea.camera.camera.MediaStoreHelper
 import app.fovea.camera.state.*
 import app.fovea.camera.ui.camera.GuideOverlay
@@ -228,7 +229,7 @@ fun PresetLibraryScreen(vm: CameraViewModel, onBack: () -> Unit, onCreate: () ->
             StateView(
                 Icons.Filled.Star,
                 if (s.presets.isEmpty()) "No presets yet" else "No matches",
-                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 7." else "Try a different search.",
+                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 8." else "Try a different search.",
                 actionLabel = if (s.presets.isEmpty()) "Create preset" else null,
                 onAction = if (s.presets.isEmpty()) onCreate else null
             )
@@ -271,7 +272,7 @@ fun PresetCreateScreen(vm: CameraViewModel, onBack: () -> Unit) {
             Text("CATEGORY", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall)
             Row { PresetCategory.values().forEach { c -> FoveaChip(c.label, { cat = c }, selected = c == cat) } }
             Text(
-                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 7.",
+                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 8.",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall
             )
             FoveaChip("Save locally", { if (vm.addPreset(name, desc, cat)) onBack() }, selected = true, enabled = name.isNotBlank())
@@ -288,7 +289,7 @@ fun PresetCodeScreen(onBack: () -> Unit) {
         CodeCheck.TOO_SHORT -> "Too short. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.TOO_LONG -> "Too long. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.BAD_CHARACTERS -> "Only letters A–Z and digits 0–9 are allowed." to false
-        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 7." to true
+        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 8." to true
     }
     ScreenScaffold("Enter preset code", onBack) {
         Column(Modifier.padding(Fovea.ScreenPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -344,12 +345,9 @@ fun ReviewScreen(item: MediaItem?, engine: CameraEngine, onBack: () -> Unit) {
         }
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             FoveaChip(if (item.isVideo) "Play" else "Open", {
-                safeStart(
-                    ctx,
-                    Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                    "No app was found to open this file."
-                )
+                if (!MediaOpener.open(ctx, item.uri, item.isVideo)) {
+                    Toast.makeText(ctx, "No app was found to open this file.", Toast.LENGTH_LONG).show()
+                }
             })
             FoveaChip("Share", {
                 val send = Intent(Intent.ACTION_SEND).setType(if (item.isVideo) "video/mp4" else "image/jpeg")

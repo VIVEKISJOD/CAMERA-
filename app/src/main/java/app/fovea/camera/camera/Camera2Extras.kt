@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.DngCreator
@@ -207,19 +208,25 @@ class Camera2Extras(private val context: Context) {
         var bestSize: Size? = null
         var bestRange: Range<Int>? = null
         val sizes: Array<Size> = map.highSpeedVideoSizes ?: emptyArray()
-        for (sz in sizes) {
-            if (sz.width > 1920 || sz.height > 1920) continue
-            val all = map.getHighSpeedVideoFpsRangesFor(sz)
-            val fixed = all.filter { it.lower == it.upper }
-            val usable = if (fixed.isEmpty()) all.toList() else fixed
-            for (r in usable) {
-                val curSize = bestSize
-                val curRange = bestRange
-                val area = sz.width.toLong() * sz.height
-                val better = curSize == null || curRange == null || r.upper > curRange.upper ||
-                    (r.upper == curRange.upper && area > curSize.width.toLong() * curSize.height)
-                if (better) { bestSize = sz; bestRange = r }
+        // 240 fps is the sweet spot: each frame still gets enough light (480/960 fps is far too dark and noisy).
+        // Frame rates above 240 are used only if the phone offers nothing else.
+        for (cap in intArrayOf(240, Int.MAX_VALUE)) {
+            for (sz in sizes) {
+                if (sz.width > 1920 || sz.height > 1920) continue
+                val all = map.getHighSpeedVideoFpsRangesFor(sz)
+                val fixed = all.filter { it.lower == it.upper }
+                val usable = if (fixed.isEmpty()) all.toList() else fixed
+                for (r in usable) {
+                    if (r.upper > cap) continue
+                    val curSize = bestSize
+                    val curRange = bestRange
+                    val area = sz.width.toLong() * sz.height
+                    val better = curSize == null || curRange == null || r.upper > curRange.upper ||
+                        (r.upper == curRange.upper && area > curSize.width.toLong() * curSize.height)
+                    if (better) { bestSize = sz; bestRange = r }
+                }
             }
+            if (bestSize != null) break
         }
         val size = bestSize
         val range = bestRange
@@ -271,6 +278,25 @@ class Camera2Extras(private val context: Context) {
             val builder = dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
             builder.addTarget(surface)
             builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
+            builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+            builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO)
+            // Slow motion has very short exposures, so the picture is dark by nature: brighten it by up to +2 stops.
+            try {
+                val evRange = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                val evStep = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: 0f
+                if (evRange != null && evStep > 0f) {
+                    val want = Math.round(2f / evStep)
+                    builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, want.coerceIn(evRange.lower, evRange.upper))
+                }
+            } catch (e: Exception) { }
+            // Keep the focus following the subject while recording.
+            try {
+                val afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)
+                if (afModes != null && afModes.contains(CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
+                    builder.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                }
+            } catch (e: Exception) { }
             val burst = (hs as CameraConstrainedHighSpeedCaptureSession).createHighSpeedRequestList(builder.build())
             hs.setRepeatingBurst(burst, null, handler)
             recorder.start()

@@ -26,8 +26,8 @@ import kotlin.math.hypot
 
 /** Saves a color-graded COPY of a photo next to the original. The original is never modified. */
 object LookProcessor {
-    // Keeps memory use safe on phones. Larger photos are scaled down for the look copy only.
-    private const val MAX_PIXELS = 8_000_000L
+    // Keeps memory use safe on phones. Only photos above 16 MP are scaled down (halved) for the saved copy.
+    private const val MAX_PIXELS = 16_000_000L
 
     fun createLookCopy(
         context: Context, source: Uri, look: Look, watermark: String? = null, effect: PhotoEffect = PhotoEffect.NONE
@@ -100,7 +100,7 @@ object LookProcessor {
         val uri = cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         if (uri == null) { out.recycle(); return null }
         try {
-            val written = cr.openOutputStream(uri)?.use { out.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+            val written = cr.openOutputStream(uri)?.use { out.compress(Bitmap.CompressFormat.JPEG, 98, it) }
                 ?: throw IOException("could not open output")
             if (!written) throw IOException("could not write JPEG")
             values.clear()

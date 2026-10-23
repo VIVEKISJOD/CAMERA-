@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 7. */
+/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 8. */
 class CameraViewModel : ViewModel() {
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()

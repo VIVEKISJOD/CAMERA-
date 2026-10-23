@@ -12,6 +12,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import app.fovea.camera.camera.CameraEngine
 import app.fovea.camera.camera.MediaItem
+import app.fovea.camera.camera.MediaOpener
 import app.fovea.camera.settings.SettingsStore
 import app.fovea.camera.state.CameraViewModel
 import app.fovea.camera.state.toPersisted
@@ -78,13 +79,7 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
         composable(Routes.GALLERY) {
             GalleryScreen(engine, back) { item ->
                 // Open in the phone's own Gallery app. Fovea's own review screen is only the fallback.
-                val opened = try {
-                    ctx.startActivity(
-                        Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    )
-                    true
-                } catch (e: Exception) { false }
+                val opened = MediaOpener.open(ctx, item.uri, item.isVideo)
                 if (!opened) { reviewItem = item; nav.navigate(Routes.REVIEW) }
             }
         }

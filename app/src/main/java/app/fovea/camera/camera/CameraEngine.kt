@@ -3,13 +3,14 @@ package app.fovea.camera.camera
 import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.media.MediaActionSound
 import android.net.Uri
 import android.os.Build
-import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -25,7 +26,6 @@ import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -78,7 +78,6 @@ class CameraEngine(private val context: Context) {
     private val MIN_FREE_BYTES = 50L * 1024 * 1024
     private val VIDEO_RESERVE_BYTES = 30L * 1024 * 1024
     private val mainExecutor = ContextCompat.getMainExecutor(context)
-    private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val lookExecutor = Executors.newSingleThreadExecutor()
     private val sound = MediaActionSound().apply { load(MediaActionSound.SHUTTER_CLICK) }
 
@@ -87,7 +86,6 @@ class CameraEngine(private val context: Context) {
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
-    private var lastHistogramAt = 0L
     private val extras = Camera2Extras(context)
     private var extensions: ExtensionsManager? = null
     private var dualBack: VideoCapture<Recorder>? = null
@@ -158,6 +156,11 @@ class CameraEngine(private val context: Context) {
                 AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
             else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
             val selector = ResolutionSelector.Builder().setAspectRatioStrategy(strategy).build()
+            // Photos always ask for the biggest picture the phone can give in this shape (never a smaller default).
+            val photoSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(strategy)
+                .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                .build()
 
             val preview = Preview.Builder().setResolutionSelector(selector).build()
             preview.setSurfaceProvider(view.surfaceProvider)
@@ -198,7 +201,7 @@ class CameraEngine(private val context: Context) {
                     extMode = ExtensionMode.NONE
                 }
                 val ic = ImageCapture.Builder()
-                    .setResolutionSelector(if (special == SpecialMode.ULTRA_HD) ultraSelector(strategy) else selector)
+                    .setResolutionSelector(if (special == SpecialMode.ULTRA_HD) ultraSelector(strategy) else photoSelector)
                     .setCaptureMode(
                         if (cfg.fastCapture) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
                         else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
@@ -209,14 +212,9 @@ class CameraEngine(private val context: Context) {
                 imageCapture = ic
                 videoCapture = null
                 useCases += ic
-                // The live histogram is not combined with phone extensions (they allow fewer camera streams).
-                if (cfg.histogram && extMode == ExtensionMode.NONE) {
-                    val analysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-                    analysis.setAnalyzer(analysisExecutor) { img -> analyze(img) }
-                    useCases += analysis
-                } else histogram.value = null
+                // The live histogram is read from the preview picture (see sampleHistogram), NOT from an extra camera
+                // stream: an extra stream made some phones shrink the saved photo.
+                if (!cfg.histogram || extMode != ExtensionMode.NONE) histogram.value = null
             }
 
             val extSelector = if (extMode != ExtensionMode.NONE && em != null)
@@ -508,7 +506,7 @@ class CameraEngine(private val context: Context) {
 
     private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 
-    fun takePhoto(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect, onDone: (Boolean) -> Unit) {
+    fun takePhoto(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect, announce: Boolean = true, onDone: (Boolean) -> Unit) {
         val ic = imageCapture
         if (ic == null) { events.tryEmit("Camera is not ready yet."); onDone(false); return }
         if (freeBytes() < MIN_FREE_BYTES) { events.tryEmit("Storage is almost full. Free some space to take photos."); onDone(false); return }
@@ -526,31 +524,42 @@ class CameraEngine(private val context: Context) {
                 val src = r.savedUri
                 lastSaved.value = src
                 onDone(true)
-                if ((look != Look.OFF || watermark != null || effect != PhotoEffect.NONE) && src != null) {
-                    val what = listOfNotNull(
-                        when (effect) {
-                            PhotoEffect.TILT_SHIFT -> "Tilt-shift"
-                            PhotoEffect.DOCUMENT -> "Document"
-                            PhotoEffect.NONE -> null
-                        },
-                        if (look != Look.OFF && effect != PhotoEffect.DOCUMENT) look.label else null,
-                        if (watermark != null) "watermark" else null
-                    ).joinToString(" + ")
-                    try {
-                        lookExecutor.execute {
-                            try {
-                                val copy = LookProcessor.createLookCopy(context, src, look, watermark, effect)
-                                if (copy != null) {
-                                    lastSaved.value = copy
-                                    events.tryEmit("Saved original + $what copy")
-                                } else events.tryEmit("$what could not be applied. Original is saved.")
-                            } catch (t: Throwable) {
-                                events.tryEmit("$what failed (${t.javaClass.simpleName}). Original is saved.")
+                if (src == null) return
+                val needsCopy = look != Look.OFF || watermark != null || effect != PhotoEffect.NONE
+                val what = listOfNotNull(
+                    when (effect) {
+                        PhotoEffect.TILT_SHIFT -> "Tilt-shift"
+                        PhotoEffect.DOCUMENT -> "Document"
+                        PhotoEffect.NONE -> null
+                    },
+                    if (look != Look.OFF && effect != PhotoEffect.DOCUMENT) look.label else null,
+                    if (watermark != null) "watermark" else null
+                ).joinToString(" + ")
+                try {
+                    lookExecutor.execute {
+                        try {
+                            if (!needsCopy) {
+                                if (announce) photoSizeText(src)?.let { events.tryEmit("Saved $it") }
+                                return@execute
                             }
+                            val copy = LookProcessor.createLookCopy(context, src, look, watermark, effect)
+                            if (copy == null) {
+                                events.tryEmit("$what could not be applied. Original is saved.")
+                            } else if (watermark != null) {
+                                // Watermark ON: only ONE photo is kept (the one with the watermark).
+                                MediaStoreHelper.delete(context, src)
+                                lastSaved.value = copy
+                                events.tryEmit("Saved with $what" + (photoSizeText(copy)?.let { " ($it)" } ?: ""))
+                            } else {
+                                lastSaved.value = copy
+                                events.tryEmit("Saved original + $what copy")
+                            }
+                        } catch (t: Throwable) {
+                            events.tryEmit("$what failed (${t.javaClass.simpleName}). Original is saved.")
                         }
-                    } catch (e: RejectedExecutionException) {
-                        // App is closing; the original photo is already saved.
                     }
+                } catch (e: RejectedExecutionException) {
+                    // App is closing; the original photo is already saved.
                 }
             }
             override fun onError(e: ImageCaptureException) {
@@ -560,10 +569,19 @@ class CameraEngine(private val context: Context) {
         })
     }
 
+    /** "12.2 MP (4000x3000)" for a saved photo, or null if it cannot be read. */
+    private fun photoSizeText(uri: Uri): String? = try {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+        if (o.outWidth > 0 && o.outHeight > 0) {
+            "%.1f MP (%dx%d)".format(o.outWidth.toLong() * o.outHeight / 1_000_000.0, o.outWidth, o.outHeight)
+        } else null
+    } catch (e: Exception) { null }
+
     /** Takes one photo and waits until it is saved. Returns false if it failed (message already posted). */
-    suspend fun takePhotoAwait(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect = PhotoEffect.NONE): Boolean =
+    suspend fun takePhotoAwait(playSound: Boolean, look: Look, watermark: String?, effect: PhotoEffect = PhotoEffect.NONE, announce: Boolean = false): Boolean =
         suspendCancellableCoroutine { cont ->
-            takePhoto(playSound, look, watermark, effect) { ok -> if (cont.isActive) cont.resume(ok) }
+            takePhoto(playSound, look, watermark, effect, announce) { ok -> if (cont.isActive) cont.resume(ok) }
         }
 
     private suspend fun captureFrame(): RawFrame? = suspendCancellableCoroutine { c ->
@@ -737,30 +755,26 @@ class CameraEngine(private val context: Context) {
         else -> "Video could not be saved (error $code)."
     }
 
-    private fun analyze(img: androidx.camera.core.ImageProxy) {
+    /** Live histogram from the preview picture. Call from the main thread a few times per second. */
+    fun sampleHistogram(view: PreviewView) {
+        val grabbed: Bitmap? = try { view.bitmap } catch (e: Throwable) { null }
+        val bmp = grabbed ?: return
         try {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastHistogramAt >= 200) {
-                lastHistogramAt = now
-                val plane = img.planes[0]
-                val buf = plane.buffer
-                val rs = plane.rowStride
-                val ps = plane.pixelStride
-                val bins = IntArray(64)
-                var y = 0
-                while (y < img.height) {
-                    var x = 0
-                    while (x < img.width) {
-                        val i = y * rs + x * ps
-                        if (i < buf.limit()) bins[(buf.get(i).toInt() and 0xFF) shr 2]++
-                        x += 8
-                    }
-                    y += 8
-                }
-                histogram.value = bins
+            val small = Bitmap.createScaledBitmap(bmp, 64, 64, true)
+            val px = IntArray(64 * 64)
+            small.getPixels(px, 0, 64, 0, 0, 64, 64)
+            val bins = IntArray(64)
+            for (c in px) {
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                val y = (r * 299 + g * 587 + b * 114) / 1000
+                bins[y shr 2]++
             }
+            if (small !== bmp) small.recycle()
+            histogram.value = bins
         } finally {
-            img.close()
+            bmp.recycle()
         }
     }
 
@@ -770,7 +784,6 @@ class CameraEngine(private val context: Context) {
         extras.release()
         provider?.unbindAll()
         sound.release()
-        analysisExecutor.shutdown()
         lookExecutor.shutdown()
     }
 }

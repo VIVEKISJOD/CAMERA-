@@ -241,14 +241,7 @@ fun CameraScreen(
     fun openGallery() {
         val item = latest
         if (item == null) { onGallery(); return }
-        try {
-            ctx.startActivity(
-                Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            )
-        } catch (e: Exception) {
-            onGallery()
-        }
+        if (!MediaOpener.open(ctx, item.uri, item.isVideo)) onGallery()
     }
 
     DisposableEffect(Unit) {
@@ -282,6 +275,15 @@ fun CameraScreen(
         }
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
+    // Live histogram: read from the preview picture a few times per second (no extra camera stream).
+    LaunchedEffect(wantHist, isVideo, bound, special, camGranted) {
+        if (wantHist && !isVideo && camGranted && special == SpecialMode.NONE) {
+            while (true) {
+                engine.sampleHistogram(previewView)
+                delay(300)
+            }
+        } else engine.histogram.value = null
+    }
     // Keep the screen awake while a burst or time-lapse is running, otherwise the camera would close.
     LaunchedEffect(seqTotal) { previewView.keepScreenOn = seqTotal > 0 }
     // Live preview of the look is an approximation (color only, no vignette).
