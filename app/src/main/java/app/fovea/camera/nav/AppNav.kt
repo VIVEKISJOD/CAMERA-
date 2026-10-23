@@ -1,16 +1,25 @@
 package app.fovea.camera.nav
 
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import app.fovea.camera.camera.CameraEngine
+import app.fovea.camera.camera.MediaItem
+import app.fovea.camera.settings.SettingsStore
 import app.fovea.camera.state.CameraViewModel
+import app.fovea.camera.state.toPersisted
 import app.fovea.camera.ui.camera.CameraScreen
 import app.fovea.camera.ui.screens.*
+import app.fovea.camera.update.UpdateManager
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 
 object Routes {
     const val CAMERA = "camera"
@@ -27,9 +36,19 @@ object Routes {
 }
 
 @Composable
-fun AppNav(vm: CameraViewModel = viewModel()) {
+fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
+    val ctx = LocalContext.current
+    val store = remember { SettingsStore(ctx) }
+    val updates = remember { UpdateManager(ctx.applicationContext) }
+    remember { vm.applyPersisted(store.load()); true }
+    LaunchedEffect(Unit) {
+        vm.state.map { it.toPersisted() }.distinctUntilChanged().drop(1).collect { store.save(it) }
+    }
+
     val nav = rememberNavController()
     val back: () -> Unit = { nav.popBackStack() }
+    var reviewItem by remember { mutableStateOf<MediaItem?>(null) }
+
     NavHost(
         navController = nav, startDestination = Routes.CAMERA,
         enterTransition = { fadeIn(tween(180)) }, exitTransition = { fadeOut(tween(120)) },
@@ -37,7 +56,7 @@ fun AppNav(vm: CameraViewModel = viewModel()) {
     ) {
         composable(Routes.CAMERA) {
             CameraScreen(
-                vm,
+                vm, engine,
                 onSettings = { nav.navigate(Routes.SETTINGS) },
                 onGallery = { nav.navigate(Routes.GALLERY) },
                 onPresets = { nav.navigate(Routes.PRESETS) },
@@ -45,15 +64,15 @@ fun AppNav(vm: CameraViewModel = viewModel()) {
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(vm, back, { nav.navigate(Routes.GUIDES) }, { nav.navigate(Routes.CAPS) }, { nav.navigate(Routes.ABOUT) }, { nav.navigate(Routes.STATES) })
+            SettingsScreen(vm, updates, back, { nav.navigate(Routes.GUIDES) }, { nav.navigate(Routes.CAPS) }, { nav.navigate(Routes.ABOUT) }, { nav.navigate(Routes.STATES) })
         }
         composable(Routes.GUIDES) { GuidesScreen(vm, back) }
         composable(Routes.PRESETS) { PresetLibraryScreen(vm, back, { nav.navigate(Routes.PRESET_CREATE) }, { nav.navigate(Routes.PRESET_CODE) }) }
         composable(Routes.PRESET_CREATE) { PresetCreateScreen(vm, back) }
         composable(Routes.PRESET_CODE) { PresetCodeScreen(back) }
-        composable(Routes.GALLERY) { GalleryScreen(back) { nav.navigate(Routes.REVIEW) } }
-        composable(Routes.REVIEW) { ReviewScreen(back) }
-        composable(Routes.CAPS) { CapabilitiesScreen(back) }
+        composable(Routes.GALLERY) { GalleryScreen(engine, back) { reviewItem = it; nav.navigate(Routes.REVIEW) } }
+        composable(Routes.REVIEW) { ReviewScreen(reviewItem, engine, back) }
+        composable(Routes.CAPS) { CapabilitiesScreen(engine, back) }
         composable(Routes.ABOUT) { AboutScreen(back) }
         composable(Routes.STATES) { StatesPreviewScreen(back) }
     }

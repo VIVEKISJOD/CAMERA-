@@ -40,10 +40,48 @@ class CameraViewModelTest {
         vm.deletePreset(1)
         assertEquals(1, vm.state.value.presets.size)
     }
-    @Test fun modeSwitchStopsRecording() {
-        val vm = CameraViewModel(); vm.setMode(CaptureMode.VIDEO); vm.onShutter()
-        assertTrue(vm.state.value.recording)
-        vm.setMode(CaptureMode.PHOTO)
-        assertFalse(vm.state.value.recording)
+    @Test fun cannotSwitchModeOrCameraWhileRecording() {
+        val vm = CameraViewModel(); vm.setMode(CaptureMode.VIDEO); vm.setRecording(true)
+        vm.setMode(CaptureMode.PHOTO); vm.switchCamera()
+        assertEquals(CaptureMode.VIDEO, vm.state.value.mode)
+        assertFalse(vm.state.value.frontCamera)
+    }
+    @Test fun videoForcesWideAspect() {
+        val vm = CameraViewModel(); vm.setMode(CaptureMode.VIDEO)
+        assertEquals(AspectOption.R169, vm.state.value.effectiveAspect())
+    }
+    @Test fun manualExposureTurnsOnAndOff() {
+        val vm = CameraViewModel(); vm.setIso(800)
+        assertTrue(vm.state.value.exposureManual)
+        vm.setExposureAuto()
+        assertFalse(vm.state.value.exposureManual)
+    }
+    @Test fun restoreDefaultsKeepsPresets() {
+        val vm = CameraViewModel()
+        vm.addPreset("Keep me", "", PresetCategory.LOOK)
+        vm.setGuide(GuideType.SPIRAL); vm.setShutterSound(false)
+        vm.restoreDefaults()
+        assertEquals(GuideType.THIRDS, vm.state.value.guide)
+        assertTrue(vm.state.value.shutterSound)
+        assertEquals(1, vm.state.value.presets.size)
+    }
+    @Test fun persistedRoundTrip() {
+        val vm = CameraViewModel()
+        val p = PersistedSettings(GuideType.SPIRAL, AspectOption.R169, true, false, false, true)
+        vm.applyPersisted(p)
+        assertEquals(p, vm.state.value.toPersisted())
+    }
+}
+
+class UpdateParserTest {
+    @Test fun parsesBuildTag() = assertEquals(12, app.fovea.camera.update.UpdateParser.buildNumber("build-12"))
+    @Test fun rejectsOtherTags() {
+        assertNull(app.fovea.camera.update.UpdateParser.buildNumber("v1.2"))
+        assertNull(app.fovea.camera.update.UpdateParser.buildNumber("build-x"))
+    }
+    @Test fun newerComparison() {
+        assertTrue(app.fovea.camera.update.UpdateParser.isNewer(5, 4))
+        assertFalse(app.fovea.camera.update.UpdateParser.isNewer(4, 4))
+        assertFalse(app.fovea.camera.update.UpdateParser.isNewer(3, 4))
     }
 }

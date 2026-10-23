@@ -8,6 +8,4 @@
 /captures/
 *.apk
 *.aab
-*.jks
-*.keystore
 *.zip

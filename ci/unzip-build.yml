@@ -1,0 +1,57 @@
+name: Unzip, build and release
+on:
+  push:
+    paths:
+      - '*.zip'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip project (if a ZIP is present)
+        run: |
+          if ls *.zip >/dev/null 2>&1; then
+            unzip -o *.zip -d _p
+            rm -rf _p/.github
+            cp -a _p/. .
+            rm -rf _p
+            rm -f *.zip
+          fi
+      - name: Create signing key once (only if missing)
+        run: |
+          if [ ! -f app/fovea-personal.jks ]; then
+            keytool -genkeypair -alias fovea -keyalg RSA -keysize 2048 -validity 36500 \
+              -keystore app/fovea-personal.jks -storepass fovea-personal -keypass fovea-personal \
+              -dname "CN=Fovea Personal, O=Fovea, C=IN"
+          fi
+      - name: Save extracted source into the repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -m "Extract project from ZIP" || true
+          git push
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Test and build
+        run: gradle testDebugUnitTest assembleDebug -PbuildNumber=${{ github.run_number }} -PgithubRepo=${{ github.repository }} --stacktrace
+      - name: Publish release (this is what the in-app updater reads)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk fovea.apk
+          gh release create "build-${{ github.run_number }}" fovea.apk \
+            --title "Fovea 0.2.${{ github.run_number }}" \
+            --notes-file RELEASE_NOTES.md --latest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fovea-debug-apk
+          path: fovea.apk

@@ -1,7 +1,8 @@
 package app.fovea.camera.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,29 +20,84 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.fovea.camera.BuildConfig
+import app.fovea.camera.camera.CameraEngine
+import app.fovea.camera.camera.MediaItem
+import app.fovea.camera.camera.MediaStoreHelper
 import app.fovea.camera.state.*
 import app.fovea.camera.ui.camera.GuideOverlay
 import app.fovea.camera.ui.components.*
 import app.fovea.camera.ui.theme.Fovea
+import app.fovea.camera.update.UpdateManager
+import app.fovea.camera.update.UpdateState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @Composable
-fun SettingsScreen(vm: CameraViewModel, onBack: () -> Unit, onGuides: () -> Unit, onCaps: () -> Unit, onAbout: () -> Unit, onStates: () -> Unit) {
+fun SettingsScreen(
+    vm: CameraViewModel, updates: UpdateManager, onBack: () -> Unit,
+    onGuides: () -> Unit, onCaps: () -> Unit, onAbout: () -> Unit, onStates: () -> Unit
+) {
     val s by vm.state.collectAsState()
+    var confirmReset by remember { mutableStateOf(false) }
     ScreenScaffold("Settings", onBack) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             SectionLabel("Viewfinder")
-            SettingRow("Composition guides", s.guide.label, onClick = onGuides)
-            ToggleRow("Histogram overlay", "Preference stored in this session only", UiFlag.HISTOGRAM in s.flags) { vm.toggleFlag(UiFlag.HISTOGRAM) }
-            ToggleRow("Level overlay", "Preference stored in this session only", UiFlag.LEVEL in s.flags) { vm.toggleFlag(UiFlag.LEVEL) }
-            SectionLabel("Feedback")
-            ToggleRow("Haptics", "Preference stored in this session only", UiFlag.HAPTICS in s.flags) { vm.toggleFlag(UiFlag.HAPTICS) }
+            SettingRow("Gridlines", s.guide.label, onClick = onGuides)
+            ToggleRow("Histogram", "Live brightness graph (photo and pro modes)", UiFlag.HISTOGRAM in s.flags) { vm.toggleFlag(UiFlag.HISTOGRAM) }
+            SectionLabel("Capture")
+            ToggleRow("Shutter sound", "Plays a click when a photo is taken", s.shutterSound) { vm.setShutterSound(it) }
+            ToggleRow("Volume buttons take photos", "Works while the camera screen is open", s.volumeShutter) { vm.setVolumeShutter(it) }
+            ToggleRow("Haptics", "Vibrate on shutter press", UiFlag.HAPTICS in s.flags) { vm.toggleFlag(UiFlag.HAPTICS) }
             SectionLabel("Privacy")
-            SettingRow("Location tagging", "Off. Settings are persisted and applied from Stage 3.") { UiOnlyTag("OFF") }
+            SettingRow("Location tagging", "Off. Fovea does not read your location.")
+            SectionLabel("Updates")
+            UpdateSection(updates)
             SectionLabel("Device")
-            SettingRow("Device capabilities", "What this phone's camera supports", onClick = onCaps)
+            SettingRow("Device capabilities", "What this phone's camera reports", onClick = onCaps)
             SettingRow("UI states preview", "Loading, empty, permission and error layouts", onClick = onStates)
+            SettingRow("Restore default settings", "Photos and presets are not deleted", onClick = { confirmReset = true })
             SettingRow("About", "Version and project info", onClick = onAbout)
+        }
+    }
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("Restore default settings?") },
+            text = { Text("Your photos, videos and saved presets will not be deleted.") },
+            confirmButton = { TextButton({ vm.restoreDefaults(); confirmReset = false }) { Text("Restore") } },
+            dismissButton = { TextButton({ confirmReset = false }) { Text("Cancel") } },
+            containerColor = Fovea.Graphite
+        )
+    }
+}
+
+@Composable
+private fun UpdateSection(updates: UpdateManager) {
+    val st by updates.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val installed = "Installed: ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})"
+    when (val u = st) {
+        UpdateState.Idle -> SettingRow("Check for updates", installed, onClick = { scope.launch { updates.check() } })
+        UpdateState.Checking -> SettingRow("Checking…", installed)
+        UpdateState.UpToDate -> SettingRow("You're up to date", "$installed. Tap to check again.", onClick = { scope.launch { updates.check() } })
+        is UpdateState.Available -> SettingRow(
+            "Update available: ${u.name}", u.notes.take(160).ifBlank { "Tap to download." },
+            onClick = { scope.launch { updates.download(u) } }
+        ) { Text("Download", color = Fovea.Accent) }
+        is UpdateState.Downloading -> SettingRow("Downloading… ${u.percent}%", "Your current version keeps working.")
+        is UpdateState.Ready -> SettingRow(
+            "Ready to install", "Android will ask you to confirm. If it opens a settings page, allow installs from Fovea, then come back and tap again.",
+            onClick = { ctx.startActivity(updates.installIntent(u.file)) }
+        ) { Text("Install", color = Fovea.Accent) }
+        is UpdateState.Error -> SettingRow("Update problem", u.message, onClick = { scope.launch { updates.check() } }) {
+            Text("Retry", color = Fovea.Accent)
         }
     }
 }
@@ -49,7 +105,7 @@ fun SettingsScreen(vm: CameraViewModel, onBack: () -> Unit, onGuides: () -> Unit
 @Composable
 fun GuidesScreen(vm: CameraViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsState()
-    ScreenScaffold("Composition guides", onBack) {
+    ScreenScaffold("Gridlines", onBack) {
         Box(
             Modifier.padding(Fovea.ScreenPadding).fillMaxWidth().aspectRatio(4f / 3f)
                 .clip(RoundedCornerShape(10.dp)).background(Fovea.Graphite)
@@ -160,21 +216,26 @@ fun PresetCodeScreen(onBack: () -> Unit) {
 }
 
 @Composable
-fun GalleryScreen(onBack: () -> Unit, onOpen: () -> Unit) {
-    var sample by remember { mutableStateOf(false) }
-    ScreenScaffold("Recent captures", onBack, actions = {
-        FoveaChip(if (sample) "Hide sample" else "Show layout", { sample = !sample })
-    }) {
-        if (!sample) {
-            StateView(Icons.Filled.Home, "No captures yet", "Photos and videos you take will appear here. Capture arrives in Stage 2.")
-        } else {
-            Box(Modifier.padding(horizontal = Fovea.ScreenPadding)) { UiOnlyTag("SAMPLE LAYOUT — NOT REAL PHOTOS") }
-            LazyVerticalGrid(GridCells.Fixed(3), contentPadding = PaddingValues(Fovea.ScreenPadding), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items((1..12).toList()) { n ->
-                    Box(
-                        Modifier.aspectRatio(1f).clip(RoundedCornerShape(6.dp)).background(Fovea.Surface2).clickable(onClick = onOpen),
-                        contentAlignment = Alignment.Center
-                    ) { Text("$n", color = Fovea.Muted) }
+fun GalleryScreen(engine: CameraEngine, onBack: () -> Unit, onOpen: (MediaItem) -> Unit) {
+    val ctx = LocalContext.current
+    val saved by engine.lastSaved.collectAsState()
+    var items by remember { mutableStateOf<List<MediaItem>?>(null) }
+    LaunchedEffect(saved) { items = withContext(Dispatchers.IO) { MediaStoreHelper.recent(ctx) } }
+    ScreenScaffold("Recent captures", onBack) {
+        val list = items
+        when {
+            list == null -> LoadingView("Loading captures")
+            list.isEmpty() -> StateView(Icons.Filled.Home, "No captures yet", "Photos and videos you take with Fovea appear here.")
+            else -> LazyVerticalGrid(
+                GridCells.Fixed(3), contentPadding = PaddingValues(Fovea.ScreenPadding),
+                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(list, key = { it.uri.toString() }) { m ->
+                    Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(6.dp)).clickable { onOpen(m) }) {
+                        MediaThumb(m.uri, 320, Modifier.matchParentSize())
+                        if (m.isVideo) Text("VIDEO", color = Fovea.Text, style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+                    }
                 }
             }
         }
@@ -182,37 +243,84 @@ fun GalleryScreen(onBack: () -> Unit, onOpen: () -> Unit) {
 }
 
 @Composable
-fun ReviewScreen(onBack: () -> Unit) {
+fun ReviewScreen(item: MediaItem?, engine: CameraEngine, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    var confirmDelete by remember { mutableStateOf(false) }
+    if (item == null) {
+        ScreenScaffold("Review", onBack) { StateView(Icons.Filled.Warning, "Nothing selected", "Go back and pick a capture.") }
+        return
+    }
     ScreenScaffold("Review", onBack) {
-        Box(Modifier.weight(1f).fillMaxWidth().padding(Fovea.ScreenPadding).clip(RoundedCornerShape(10.dp)).background(Fovea.Graphite), contentAlignment = Alignment.Center) {
-            Text("Photo appears here", color = Fovea.Muted)
+        Box(Modifier.weight(1f).fillMaxWidth().padding(Fovea.ScreenPadding).clip(RoundedCornerShape(10.dp)).background(Fovea.Graphite)) {
+            MediaThumb(item.uri, 1440, Modifier.matchParentSize(), ContentScale.Fit)
         }
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            FoveaChip("Share", {}, enabled = false)
-            FoveaChip("Info", {}, enabled = false)
-            FoveaChip("Delete", {}, enabled = false)
+            FoveaChip(if (item.isVideo) "Play" else "Open", {
+                ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            })
+            FoveaChip("Share", {
+                val send = Intent(Intent.ACTION_SEND).setType(if (item.isVideo) "video/mp4" else "image/jpeg")
+                    .putExtra(Intent.EXTRA_STREAM, item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                ctx.startActivity(Intent.createChooser(send, "Share"))
+            })
+            FoveaChip("Delete", { confirmDelete = true })
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this capture?") },
+            text = { Text("It will be removed from your phone.") },
+            confirmButton = {
+                TextButton({
+                    confirmDelete = false
+                    if (MediaStoreHelper.delete(ctx, item.uri)) { engine.lastSaved.value = null; onBack() }
+                }) { Text("Delete", color = Fovea.Danger) }
+            },
+            dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },
+            containerColor = Fovea.Graphite
+        )
+    }
+}
+
+@Composable
+fun CapabilitiesScreen(engine: CameraEngine, onBack: () -> Unit) {
+    val c by engine.caps.collectAsState()
+    fun yn(b: Boolean) = if (b) "Supported" else "Not supported"
+    ScreenScaffold("Device capabilities", onBack) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            Text(
+                if (c.ready) "Read from the camera that is currently active. Switch cameras on the main screen to see the other one."
+                else "Open the camera screen first so Fovea can read the camera.",
+                color = Fovea.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Fovea.ScreenPadding)
+            )
+            if (c.ready) {
+                CapRow("Camera hardware level", c.hardwareLevel)
+                CapRow("Rear / front camera", "${yn(c.hasBack)} / ${yn(c.hasFront)}")
+                CapRow("Flash", yn(c.hasFlash))
+                CapRow("Zoom range", "%.1fx – %.1fx".format(c.minZoom, c.maxZoom))
+                CapRow("Exposure compensation", if (c.evSupported) "%+.1f to %+.1f EV".format(c.evMin, c.evMax) else "Not supported")
+                CapRow("Manual ISO and shutter", if (c.isoSupported) "ISO ${c.isoMin}–${c.isoMax}" else "Not supported")
+                CapRow("Manual focus", if (c.manualFocus) "Supported" else "Not supported")
+                CapRow("White balance presets", c.awbModes.joinToString { it.label })
+                CapRow("RAW (hardware)", if (c.rawCapable) "Hardware supports it. DNG capture is not built yet." else "Not supported")
+            }
         }
     }
 }
 
 @Composable
-fun CapabilitiesScreen(onBack: () -> Unit) {
-    val rows = listOf("Lenses", "ISO range", "Shutter range", "Manual focus", "White balance", "RAW / DNG", "Video stabilization", "Flash / torch")
-    ScreenScaffold("Device capabilities", onBack) {
-        Text(
-            "Capabilities are read from the real camera in Stage 2. Nothing below is claimed as supported.",
-            color = Fovea.Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Fovea.ScreenPadding)
-        )
-        LazyColumn { items(rows) { SettingRow(it) { Text("Not checked yet", color = Fovea.Muted, style = MaterialTheme.typography.bodySmall) } } }
-    }
+private fun CapRow(title: String, value: String) {
+    SettingRow(title) { Text(value, color = Fovea.Muted, style = MaterialTheme.typography.bodySmall) }
 }
 
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     ScreenScaffold("About", onBack) {
         SettingRow("Fovea", "A camera-first Android app")
-        SettingRow("Version", "0.1.0 (Stage 1: UI foundation)")
-        SettingRow("Privacy", "No accounts, analytics or internet required")
+        SettingRow("Version", "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})")
+        SettingRow("Privacy", "No accounts or analytics. Internet is used only to check for updates.")
     }
 }
 
