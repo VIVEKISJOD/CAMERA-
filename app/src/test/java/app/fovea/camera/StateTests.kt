@@ -20,9 +20,10 @@ class CameraViewModelTest {
         repeat(3) { vm.cycleFlash(); seen += vm.state.value.flash }
         assertEquals(listOf(FlashMode.OFF, FlashMode.AUTO, FlashMode.ON, FlashMode.OFF), seen)
     }
-    @Test fun evIsClamped() {
-        val vm = CameraViewModel(); vm.setEv(9f)
-        assertEquals(3f, vm.state.value.ev, 0f)
+    @Test fun evIsStored() {
+        // The real limits come from the camera; CameraEngine clamps to them.
+        val vm = CameraViewModel(); vm.setEv(1.5f)
+        assertEquals(1.5f, vm.state.value.ev, 0f)
     }
     @Test fun blankPresetNameRejected() {
         val vm = CameraViewModel()
