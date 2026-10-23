@@ -26,6 +26,9 @@ enum class PresetCategory(val label: String) {
 enum class UiFlag { HISTOGRAM, HAPTICS }
 enum class StartMode(val label: String) { LAST("Last used"), PHOTO("Photo"), PRO("Pro"), VIDEO("Video") }
 enum class StartCamera(val label: String) { LAST("Last used"), REAR("Rear"), FRONT("Front") }
+enum class DriveMode(val label: String) { SINGLE("Single"), BURST("Burst"), TIMELAPSE("Time-lapse") }
+enum class LapseInterval(val label: String, val seconds: Int) { S2("2 s", 2), S5("5 s", 5), S10("10 s", 10), S30("30 s", 30) }
+enum class LapseFrames(val label: String, val count: Int) { F10("10 photos", 10), F30("30 photos", 30), F60("60 photos", 60), F120("120 photos", 120) }
 enum class JpegQuality(val label: String, val value: Int) { MAX("Maximum", 100), HIGH("High", 95), STANDARD("Standard", 85) }
 enum class VideoQuality(val label: String) { UHD("4K (if supported)"), FHD("Full HD 1080p"), HD("HD 720p"), SD("SD") }
 enum class GuideColor(val label: String, val argb: Long) {
@@ -66,7 +69,9 @@ data class PersistedSettings(
     val guideOpacity: Float = 0.55f,
     val guideThickness: Float = 1f,
     val reduceMotion: Boolean = false,
-    val largeText: Boolean = false
+    val largeText: Boolean = false,
+    val watermarkOn: Boolean = false,
+    val watermarkText: String = "Fovea"
 )
 
 data class CameraUiState(
@@ -100,6 +105,12 @@ data class CameraUiState(
     val guideThickness: Float = 1f,
     val reduceMotion: Boolean = false,
     val largeText: Boolean = false,
+    val watermarkOn: Boolean = false,
+    val watermarkText: String = "Fovea",
+    // Not saved: the camera always starts in single-photo mode so a burst never starts by surprise.
+    val drive: DriveMode = DriveMode.SINGLE,
+    val lapseInterval: LapseInterval = LapseInterval.S5,
+    val lapseFrames: LapseFrames = LapseFrames.F30,
     val flags: Set<UiFlag> = setOf(UiFlag.HAPTICS),
     val presets: List<Preset> = emptyList(),
     val query: String = "",
@@ -116,7 +127,8 @@ fun CameraUiState.toPersisted() = PersistedSettings(
     startMode = startMode, startCamera = startCamera, lastMode = mode, lastFront = frontCamera,
     jpegQuality = jpegQuality, fastCapture = fastCapture, videoQuality = videoQuality, recordAudio = recordAudio,
     guideColor = guideColor, guideOpacity = guideOpacity, guideThickness = guideThickness,
-    reduceMotion = reduceMotion, largeText = largeText
+    reduceMotion = reduceMotion, largeText = largeText,
+    watermarkOn = watermarkOn, watermarkText = watermarkText
 )
 
 fun CameraUiState.visiblePresets(): List<Preset> {

@@ -8,6 +8,7 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.view.TextureView
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -60,7 +61,9 @@ import app.fovea.camera.state.*
 import app.fovea.camera.ui.components.*
 import app.fovea.camera.ui.theme.Fovea
 import app.fovea.camera.ui.theme.LocalUiScale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +71,9 @@ import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
+
+/** Number of photos in one burst. */
+private const val BURST_SHOTS = 10
 
 @Composable
 fun CameraScreen(
@@ -121,19 +127,60 @@ fun CameraScreen(
     var showMore by remember { mutableStateOf(false) }
     var showLooks by remember { mutableStateOf(false) }
     var latest by remember { mutableStateOf<Uri?>(null) }
+    var seqDone by remember { mutableIntStateOf(0) }
+    var seqTotal by remember { mutableIntStateOf(0) }
+    var seqJob by remember { mutableStateOf<Job?>(null) }
 
     fun shutter() {
         val st = vm.state.value
+        // A running burst or time-lapse is stopped by pressing the shutter again.
+        if (seqJob?.isActive == true) { seqJob?.cancel(); return }
         if (count > 0 || !camGranted) return
         if (UiFlag.HAPTICS in st.flags) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (st.mode == CaptureMode.VIDEO) {
             engine.toggleRecording(audioGranted && st.recordAudio) { rec -> vm.setRecording(rec) }
+        } else if (st.drive != DriveMode.SINGLE) {
+            seqJob = scope.launch {
+                val burst = st.drive == DriveMode.BURST
+                val total = if (burst) BURST_SHOTS else st.lapseFrames.count
+                val gapMs = if (burst) 0L else st.lapseInterval.seconds * 1000L
+                var done = 0
+                try {
+                    var i = st.timer.seconds
+                    while (i > 0) { count = i; delay(1000); i-- }
+                    count = 0
+                    seqDone = 0
+                    seqTotal = total
+                    while (done < total) {
+                        val startedAt = SystemClock.elapsedRealtime()
+                        // Originals only: no Look or watermark copies, so a long run stays fast and light.
+                        val ok = engine.takePhotoAwait(!burst && vm.state.value.shutterSound, Look.OFF, null)
+                        if (!ok) break
+                        done++
+                        seqDone = done
+                        if (done < total && gapMs > 0) {
+                            val wait = gapMs - (SystemClock.elapsedRealtime() - startedAt)
+                            if (wait > 0) delay(wait)
+                        }
+                    }
+                    vm.postMessage("Saved $done of $total photos")
+                } catch (e: CancellationException) {
+                    vm.postMessage("Stopped after $done of $total photos")
+                    throw e
+                } finally {
+                    count = 0
+                    seqTotal = 0
+                    seqDone = 0
+                }
+            }
         } else {
             scope.launch {
                 var i = st.timer.seconds
                 while (i > 0) { count = i; delay(1000); i-- }
                 count = 0
-                engine.takePhoto(vm.state.value.shutterSound, vm.state.value.look) { }
+                val cur = vm.state.value
+                val wm = if (cur.watermarkOn && cur.watermarkText.isNotBlank()) cur.watermarkText else null
+                engine.takePhoto(cur.shutterSound, cur.look, wm) { }
             }
         }
     }
@@ -161,6 +208,8 @@ fun CameraScreen(
         )
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
+    // Keep the screen awake while a burst or time-lapse is running, otherwise the camera would close.
+    LaunchedEffect(seqTotal) { previewView.keepScreenOn = seqTotal > 0 }
     // Live preview of the look is an approximation (color only, no vignette).
     LaunchedEffect(s.look, isVideo, bound, camGranted) {
         repeat(12) {
@@ -199,7 +248,7 @@ fun CameraScreen(
                     }
                 )
             } else {
-                Viewfinder(s, vm, engine, previewView, zoom, hist, count)
+                Viewfinder(s, vm, engine, previewView, zoom, hist, count, seqDone, seqTotal)
             }
         }
         if (camGranted) {
@@ -208,9 +257,9 @@ fun CameraScreen(
             else if (caps.evSupported) EvRow(s.ev, caps) { vm.setEv(it) }
         }
         ModeRow(s, vm) { showMore = true }
-        CaptureBar(s, latest, camGranted, onShutter = { shutter() }, onGallery = onGallery, onSwitch = { vm.switchCamera() })
+        CaptureBar(s, latest, camGranted, running = seqTotal > 0, onShutter = { shutter() }, onGallery = onGallery, onSwitch = { vm.switchCamera() })
     }
-    if (showMore) MoreSheet { showMore = false }
+    if (showMore) MoreSheet(s, vm) { showMore = false }
     if (showLooks) LookSheet(s.look, { vm.setLook(it) }) { showLooks = false }
 }
 
@@ -259,7 +308,7 @@ private fun TopToken(title: String, value: String, active: Boolean, enabled: Boo
 @Composable
 private fun Viewfinder(
     s: CameraUiState, vm: CameraViewModel, engine: CameraEngine, previewView: PreviewView,
-    zoom: Float, hist: IntArray?, count: Int
+    zoom: Float, hist: IntArray?, count: Int, seqDone: Int, seqTotal: Int
 ) {
     var focus by remember { mutableStateOf<Offset?>(null) }
     var tick by remember { mutableIntStateOf(0) }
@@ -299,6 +348,18 @@ private fun Viewfinder(
         if (s.recording) {
             Text("● REC", color = Fovea.Danger, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopCenter).padding(10.dp))
+        }
+        if (s.mode != CaptureMode.VIDEO && (seqTotal > 0 || s.drive != DriveMode.SINGLE)) {
+            val label = when {
+                seqTotal > 0 -> "$seqDone / $seqTotal"
+                s.drive == DriveMode.BURST -> "BURST ×$BURST_SHOTS"
+                else -> "LAPSE ${s.lapseInterval.label} ×${s.lapseFrames.count}"
+            }
+            Text(
+                label, color = Fovea.Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
+                    .clip(RoundedCornerShape(6.dp)).background(Fovea.Black.copy(alpha = 0.55f)).padding(horizontal = 8.dp, vertical = 3.dp)
+            )
         }
         if (count > 0) {
             Text("$count", color = Fovea.Text, fontSize = 72.sp, fontWeight = FontWeight.Light,
@@ -462,7 +523,7 @@ private fun ModeToken(label: String, selected: Boolean, dim: Boolean = false, on
 
 @Composable
 private fun CaptureBar(
-    s: CameraUiState, latest: Uri?, enabled: Boolean,
+    s: CameraUiState, latest: Uri?, enabled: Boolean, running: Boolean,
     onShutter: () -> Unit, onGallery: () -> Unit, onSwitch: () -> Unit
 ) {
     Row(
@@ -485,6 +546,7 @@ private fun CaptureBar(
                 .semantics {
                     contentDescription = when {
                         s.recording -> "Stop recording"
+                        running -> "Stop shooting"
                         s.mode == CaptureMode.VIDEO -> "Start recording"
                         else -> "Take photo"
                     }
@@ -492,8 +554,9 @@ private fun CaptureBar(
                 .clickable(enabled = enabled, role = Role.Button, onClick = onShutter),
             contentAlignment = Alignment.Center
         ) {
-            val shape = if (s.recording) RoundedCornerShape(6.dp) else CircleShape
-            Box(Modifier.size(if (s.recording) 30.dp else 60.dp).clip(shape).background(inner))
+            val stopLook = s.recording || running
+            val shape = if (stopLook) RoundedCornerShape(6.dp) else CircleShape
+            Box(Modifier.size(if (stopLook) 30.dp else 60.dp).clip(shape).background(inner))
         }
         RoundIconButton(
             Icons.Filled.Refresh, if (s.frontCamera) "Switch to rear camera" else "Switch to front camera", onSwitch
@@ -503,21 +566,53 @@ private fun CaptureBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MoreSheet(onDismiss: () -> Unit) {
+private fun MoreSheet(s: CameraUiState, vm: CameraViewModel, onDismiss: () -> Unit) {
+    var editWatermark by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Fovea.Graphite, contentColor = Fovea.Text) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = Fovea.ScreenPadding).padding(bottom = 24.dp)) {
-            Text("Planned modes and tools", style = MaterialTheme.typography.titleLarge)
+            Text("Capture tools", style = MaterialTheme.typography.titleLarge)
             Text(
-                "These are not built yet. They will appear here as they become real, and only if your phone supports them.",
+                "Drive mode works in Photo and Pro. Burst and time-lapse take photos one after another and keep the originals only (no Look, no watermark). Press the shutter again to stop. Time-lapse saves a series of photos, not a video. Keep the app open while it runs.",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)
             )
+            SettingRow("Drive mode", "Single photo, a burst of $BURST_SHOTS, or time-lapse", onClick = { vm.cycleDrive() }) {
+                Text(s.drive.label, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (s.drive == DriveMode.TIMELAPSE) {
+                SettingRow("Time-lapse interval", "Time between photos", onClick = { vm.cycleLapseInterval() }) {
+                    Text(s.lapseInterval.label, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
+                }
+                SettingRow("Time-lapse length", "How many photos to take", onClick = { vm.cycleLapseFrames() }) {
+                    Text(s.lapseFrames.label, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            ToggleRow("Watermark", "Adds your text to a saved copy. The original is always kept.", s.watermarkOn) { vm.setWatermarkOn(it) }
+            SettingRow(
+                "Watermark text", s.watermarkText.ifBlank { "Empty: no text will be added" },
+                onClick = { editWatermark = true }
+            )
+            Text(
+                "NOT BUILT YET", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 20.dp, bottom = 6.dp)
+            )
             listOf(
-                "HDR", "Night", "Panorama", "Time-lapse", "Slow motion", "Long exposure", "Documents",
-                "Ultra HD", "Dual video", "Timed burst", "Tilt-shift", "Watermark", "RAW / DNG capture"
+                "HDR", "Night", "Portrait blur", "Panorama", "Slow motion", "Long exposure", "Documents",
+                "Ultra HD", "Dual video", "Tilt-shift", "RAW / DNG capture"
             ).forEach { name ->
                 SettingRow(name) { UiOnlyTag("PLANNED") }
             }
         }
+    }
+    if (editWatermark) {
+        var text by remember { mutableStateOf(s.watermarkText) }
+        AlertDialog(
+            onDismissRequest = { editWatermark = false },
+            title = { Text("Watermark text") },
+            text = { OutlinedTextField(text, { text = it.take(40) }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = { TextButton({ vm.setWatermarkText(text); editWatermark = false }) { Text("Save") } },
+            dismissButton = { TextButton({ editWatermark = false }) { Text("Cancel") } },
+            containerColor = Fovea.Graphite
+        )
     }
 }
 

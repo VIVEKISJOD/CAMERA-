@@ -304,7 +304,7 @@ class CameraEngine(private val context: Context) {
 
     private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 
-    fun takePhoto(playSound: Boolean, look: Look, onDone: (Boolean) -> Unit) {
+    fun takePhoto(playSound: Boolean, look: Look, watermark: String?, onDone: (Boolean) -> Unit) {
         val ic = imageCapture
         if (ic == null) { events.tryEmit("Camera is not ready yet."); onDone(false); return }
         if (freeBytes() < MIN_FREE_BYTES) { events.tryEmit("Storage is almost full. Free some space to take photos."); onDone(false); return }
@@ -322,17 +322,22 @@ class CameraEngine(private val context: Context) {
                 val src = r.savedUri
                 lastSaved.value = src
                 onDone(true)
-                if (look != Look.OFF && src != null) {
+                if ((look != Look.OFF || watermark != null) && src != null) {
+                    val what = when {
+                        look != Look.OFF && watermark != null -> "${look.label} + watermark"
+                        look != Look.OFF -> look.label
+                        else -> "Watermark"
+                    }
                     try {
                         lookExecutor.execute {
                             try {
-                                val copy = LookProcessor.createLookCopy(context, src, look)
+                                val copy = LookProcessor.createLookCopy(context, src, look, watermark)
                                 if (copy != null) {
                                     lastSaved.value = copy
-                                    events.tryEmit("Saved original + ${look.label} copy")
-                                } else events.tryEmit("Look could not be applied. Original is saved.")
+                                    events.tryEmit("Saved original + $what copy")
+                                } else events.tryEmit("$what could not be applied. Original is saved.")
                             } catch (t: Throwable) {
-                                events.tryEmit("Look failed (${t.javaClass.simpleName}). Original is saved.")
+                                events.tryEmit("$what failed (${t.javaClass.simpleName}). Original is saved.")
                             }
                         }
                     } catch (e: RejectedExecutionException) {
@@ -346,6 +351,12 @@ class CameraEngine(private val context: Context) {
             }
         })
     }
+
+    /** Takes one photo and waits until it is saved. Returns false if it failed (message already posted). */
+    suspend fun takePhotoAwait(playSound: Boolean, look: Look, watermark: String?): Boolean =
+        suspendCancellableCoroutine { cont ->
+            takePhoto(playSound, look, watermark) { ok -> if (cont.isActive) cont.resume(ok) }
+        }
 
     fun toggleRecording(withAudio: Boolean, onState: (Boolean) -> Unit) {
         val vc = videoCapture

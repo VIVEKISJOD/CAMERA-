@@ -31,7 +31,9 @@ class SettingsStore(context: Context) {
             guideOpacity = p.getFloat("guideOpacity", d.guideOpacity).coerceIn(0.2f, 1f),
             guideThickness = p.getFloat("guideThickness", d.guideThickness).coerceIn(1f, 4f),
             reduceMotion = p.getBoolean("reduceMotion", d.reduceMotion),
-            largeText = p.getBoolean("largeText", d.largeText)
+            largeText = p.getBoolean("largeText", d.largeText),
+            watermarkOn = p.getBoolean("watermarkOn", d.watermarkOn),
+            watermarkText = (p.getString("watermarkText", d.watermarkText) ?: d.watermarkText).take(40)
         )
     }
 
@@ -57,6 +59,8 @@ class SettingsStore(context: Context) {
             .putFloat("guideThickness", s.guideThickness)
             .putBoolean("reduceMotion", s.reduceMotion)
             .putBoolean("largeText", s.largeText)
+            .putBoolean("watermarkOn", s.watermarkOn)
+            .putString("watermarkText", s.watermarkText)
             .apply()
     }
 }

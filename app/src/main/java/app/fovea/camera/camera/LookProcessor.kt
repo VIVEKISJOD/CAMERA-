@@ -25,7 +25,7 @@ object LookProcessor {
     // Keeps memory use safe on phones. Larger photos are scaled down for the look copy only.
     private const val MAX_PIXELS = 8_000_000L
 
-    fun createLookCopy(context: Context, source: Uri, look: Look): Uri? {
+    fun createLookCopy(context: Context, source: Uri, look: Look, watermark: String? = null): Uri? {
         val cr = context.contentResolver
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -72,10 +72,16 @@ object LookProcessor {
             canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { this.shader = shader })
         }
 
+        if (!watermark.isNullOrBlank()) drawWatermark(canvas, w, h, watermark)
+
+        val suffix = listOfNotNull(
+            if (look != Look.OFF) look.short else null,
+            if (!watermark.isNullOrBlank()) "WM" else null
+        ).joinToString("_")
         val baseName = displayName(context, source)?.substringBeforeLast('.')
             ?: "FOVEA_${System.currentTimeMillis()}"
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_${look.short}")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_$suffix")
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
             put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Fovea")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -97,6 +103,20 @@ object LookProcessor {
         }
         out.recycle()
         return uri
+    }
+
+    /** Text in the bottom-right corner, white with a soft dark shadow, sized from the photo. */
+    private fun drawWatermark(canvas: Canvas, w: Int, h: Int, text: String) {
+        val base = minOf(w, h).toFloat()
+        val size = base * 0.035f
+        val margin = base * 0.03f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = size
+            textAlign = Paint.Align.RIGHT
+            setShadowLayer(size * 0.15f, 0f, 0f, Color.argb(200, 0, 0, 0))
+        }
+        canvas.drawText(text, w - margin, h - margin, paint)
     }
 
     private fun displayName(context: Context, uri: Uri): String? = try {

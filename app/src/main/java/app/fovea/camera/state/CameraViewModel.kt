@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 5. */
+/** UI state holder. The camera itself lives in CameraEngine; presets stay in memory until Stage 6. */
 class CameraViewModel : ViewModel() {
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
@@ -58,7 +58,8 @@ class CameraViewModel : ViewModel() {
             jpegQuality = p.jpegQuality, fastCapture = p.fastCapture,
             videoQuality = p.videoQuality, recordAudio = p.recordAudio,
             guideColor = p.guideColor, guideOpacity = p.guideOpacity, guideThickness = p.guideThickness,
-            reduceMotion = p.reduceMotion, largeText = p.largeText
+            reduceMotion = p.reduceMotion, largeText = p.largeText,
+            watermarkOn = p.watermarkOn, watermarkText = p.watermarkText
         )
     }
 
@@ -80,6 +81,11 @@ class CameraViewModel : ViewModel() {
     fun setGuideThickness(v: Float) = change { copy(guideThickness = v.coerceIn(1f, 4f)) }
     fun setReduceMotion(v: Boolean) = change { copy(reduceMotion = v) }
     fun setLargeText(v: Boolean) = change { copy(largeText = v) }
+    fun cycleDrive() = change { copy(drive = next(drive)) }
+    fun cycleLapseInterval() = change { copy(lapseInterval = next(lapseInterval)) }
+    fun cycleLapseFrames() = change { copy(lapseFrames = next(lapseFrames)) }
+    fun setWatermarkOn(v: Boolean) = change { copy(watermarkOn = v) }
+    fun setWatermarkText(t: String) = change { copy(watermarkText = t.trim().take(40)) }
 
     fun addPreset(name: String, description: String, category: PresetCategory): Boolean {
         val n = name.trim()

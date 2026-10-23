@@ -33,7 +33,6 @@ object Routes {
     const val REVIEW = "review"
     const val CAPS = "capabilities"
     const val ABOUT = "about"
-    const val STATES = "states"
 }
 
 @Composable
@@ -69,7 +68,7 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(vm, updates, back, { nav.navigate(Routes.GUIDES) }, { nav.navigate(Routes.CAPS) }, { nav.navigate(Routes.ABOUT) }, { nav.navigate(Routes.STATES) })
+            SettingsScreen(vm, updates, back, { nav.navigate(Routes.GUIDES) }, { nav.navigate(Routes.CAPS) }, { nav.navigate(Routes.ABOUT) })
         }
         composable(Routes.GUIDES) { GuidesScreen(vm, back) }
         composable(Routes.PRESETS) { PresetLibraryScreen(vm, back, { nav.navigate(Routes.PRESET_CREATE) }, { nav.navigate(Routes.PRESET_CODE) }) }
@@ -79,7 +78,6 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
         composable(Routes.REVIEW) { ReviewScreen(reviewItem, engine, back) }
         composable(Routes.CAPS) { CapabilitiesScreen(engine, back) }
         composable(Routes.ABOUT) { AboutScreen(back) }
-        composable(Routes.STATES) { StatesPreviewScreen(back) }
     }
     }
 }

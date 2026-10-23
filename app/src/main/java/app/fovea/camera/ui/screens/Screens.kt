@@ -73,7 +73,7 @@ private fun storageSummary(ctx: Context): String {
 @Composable
 fun SettingsScreen(
     vm: CameraViewModel, updates: UpdateManager, onBack: () -> Unit,
-    onGuides: () -> Unit, onCaps: () -> Unit, onAbout: () -> Unit, onStates: () -> Unit
+    onGuides: () -> Unit, onCaps: () -> Unit, onAbout: () -> Unit
 ) {
     val s by vm.state.collectAsState()
     val ctx = LocalContext.current
@@ -127,7 +127,6 @@ fun SettingsScreen(
             UpdateSection(updates)
             SectionLabel("Device")
             SettingRow("Device capabilities", "What this phone's camera reports", onClick = onCaps)
-            SettingRow("UI states preview", "Loading, empty, permission and error layouts", onClick = onStates)
             SettingRow("Restore default settings", "Photos, videos and presets are not deleted", onClick = { confirmReset = true })
             SettingRow("About", "Version and project info", onClick = onAbout)
         }
@@ -229,7 +228,7 @@ fun PresetLibraryScreen(vm: CameraViewModel, onBack: () -> Unit, onCreate: () ->
             StateView(
                 Icons.Filled.Star,
                 if (s.presets.isEmpty()) "No presets yet" else "No matches",
-                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 5." else "Try a different search.",
+                if (s.presets.isEmpty()) "Create a preset to save it here. Presets are kept in memory until Stage 6." else "Try a different search.",
                 actionLabel = if (s.presets.isEmpty()) "Create preset" else null,
                 onAction = if (s.presets.isEmpty()) onCreate else null
             )
@@ -272,7 +271,7 @@ fun PresetCreateScreen(vm: CameraViewModel, onBack: () -> Unit) {
             Text("CATEGORY", color = Fovea.Muted, style = MaterialTheme.typography.labelSmall)
             Row { PresetCategory.values().forEach { c -> FoveaChip(c.label, { cat = c }, selected = c == cat) } }
             Text(
-                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 5.",
+                "This saves the name and category only. Capturing the current camera settings and generating a code arrive in Stage 6.",
                 color = Fovea.Muted, style = MaterialTheme.typography.bodySmall
             )
             FoveaChip("Save locally", { if (vm.addPreset(name, desc, cat)) onBack() }, selected = true, enabled = name.isNotBlank())
@@ -289,7 +288,7 @@ fun PresetCodeScreen(onBack: () -> Unit) {
         CodeCheck.TOO_SHORT -> "Too short. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.TOO_LONG -> "Too long. Codes have ${PresetCodeFormat.LENGTH} characters." to false
         CodeCheck.BAD_CHARACTERS -> "Only letters A–Z and digits 0–9 are allowed." to false
-        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 5." to true
+        CodeCheck.WELL_FORMED -> "Format looks valid. Decoding and preview arrive in Stage 6." to true
     }
     ScreenScaffold("Enter preset code", onBack) {
         Column(Modifier.padding(Fovea.ScreenPadding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -418,20 +417,5 @@ fun AboutScreen(onBack: () -> Unit) {
         SettingRow("Fovea", "A camera-first Android app")
         SettingRow("Version", "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})")
         SettingRow("Privacy", "No accounts or analytics. Internet is used only to check for updates.")
-    }
-}
-
-@Composable
-fun StatesPreviewScreen(onBack: () -> Unit) {
-    ScreenScaffold("UI states preview", onBack) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            LoadingView("Loading")
-            HorizontalDivider(color = Fovea.Line)
-            StateView(Icons.Filled.Home, "Empty", "Nothing here yet.")
-            HorizontalDivider(color = Fovea.Line)
-            StateView(Icons.Filled.Lock, "Camera permission needed", "Allow camera access to use the viewfinder.", actionLabel = "Open settings", onAction = {})
-            HorizontalDivider(color = Fovea.Line)
-            StateView(Icons.Filled.Warning, "Something went wrong", "The camera could not start. Try again.", actionLabel = "Retry", onAction = {})
-        }
     }
 }

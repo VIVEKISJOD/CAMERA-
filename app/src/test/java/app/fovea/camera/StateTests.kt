@@ -209,3 +209,46 @@ class GoldenSpiralTest {
         assertEquals(1080f, p.second, 0.01f)
     }
 }
+
+class Stage5ModesTest {
+    @Test fun driveStartsAsSingle() = assertEquals(DriveMode.SINGLE, CameraViewModel().state.value.drive)
+    @Test fun driveCyclesAndWraps() {
+        val vm = CameraViewModel()
+        val seen = mutableListOf(vm.state.value.drive)
+        repeat(DriveMode.values().size) { vm.cycleDrive(); seen += vm.state.value.drive }
+        assertEquals(listOf(DriveMode.SINGLE, DriveMode.BURST, DriveMode.TIMELAPSE, DriveMode.SINGLE), seen)
+    }
+    @Test fun lapseSettingsCycleAndWrap() {
+        val vm = CameraViewModel()
+        repeat(LapseInterval.values().size) { vm.cycleLapseInterval() }
+        repeat(LapseFrames.values().size) { vm.cycleLapseFrames() }
+        assertEquals(LapseInterval.S5, vm.state.value.lapseInterval)
+        assertEquals(LapseFrames.F30, vm.state.value.lapseFrames)
+    }
+    @Test fun lapseValuesArePositive() {
+        assertTrue(LapseInterval.values().all { it.seconds > 0 })
+        assertTrue(LapseFrames.values().all { it.count > 0 })
+    }
+    @Test fun watermarkTextIsTrimmedAndLimited() {
+        val vm = CameraViewModel()
+        vm.setWatermarkText("  Hello  ")
+        assertEquals("Hello", vm.state.value.watermarkText)
+        vm.setWatermarkText("x".repeat(80))
+        assertEquals(40, vm.state.value.watermarkText.length)
+    }
+    @Test fun watermarkIsSavedAndRestoredToDefault() {
+        val vm = CameraViewModel()
+        vm.applyPersisted(PersistedSettings(watermarkOn = true, watermarkText = "Studio"))
+        assertEquals(PersistedSettings(watermarkOn = true, watermarkText = "Studio"), vm.state.value.toPersisted())
+        vm.restoreDefaults()
+        assertFalse(vm.state.value.watermarkOn)
+        assertEquals("Fovea", vm.state.value.watermarkText)
+    }
+    @Test fun driveModeIsNeverSaved() {
+        val vm = CameraViewModel(); vm.cycleDrive()
+        vm.applyPersisted(vm.state.value.toPersisted())
+        // Applying saved settings must not touch the current drive mode, and saving has no drive field.
+        assertEquals(DriveMode.BURST, vm.state.value.drive)
+        assertEquals(PersistedSettings(), CameraViewModel().state.value.toPersisted())
+    }
+}
