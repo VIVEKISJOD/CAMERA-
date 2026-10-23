@@ -1,7 +1,19 @@
 package app.fovea.camera.ui.screens
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Environment
+import android.os.StatFs
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -39,29 +51,77 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
+private fun ValueRow(title: String, value: String, subtitle: String? = null, onClick: () -> Unit) =
+    SettingRow(title, subtitle, onClick = onClick) {
+        Text(value, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
+    }
+
+private fun storageSummary(ctx: Context): String {
+    val free = try { StatFs(Environment.getExternalStorageDirectory().absolutePath).availableBytes } catch (e: Exception) { -1L }
+    val n = MediaStoreHelper.recent(ctx, 100000).size
+    val freeText = if (free >= 0) "%.1f GB free".format(free / 1_073_741_824.0) else "free space unknown"
+    return "$n Fovea files · $freeText"
+}
+
+@Composable
 fun SettingsScreen(
     vm: CameraViewModel, updates: UpdateManager, onBack: () -> Unit,
     onGuides: () -> Unit, onCaps: () -> Unit, onAbout: () -> Unit, onStates: () -> Unit
 ) {
     val s by vm.state.collectAsState()
+    val ctx = LocalContext.current
+    val owner = ctx as ComponentActivity
     var confirmReset by remember { mutableStateOf(false) }
+    var tick by remember { mutableIntStateOf(0) }
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) tick++ }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    val camOk = remember(tick) { ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED }
+    val micOk = remember(tick) { ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED }
+    var storage by remember { mutableStateOf("Calculating…") }
+    LaunchedEffect(tick) { storage = withContext(Dispatchers.IO) { storageSummary(ctx) } }
+    val openAppSettings = {
+        ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
+    }
+
     ScreenScaffold("Settings", onBack) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
+            SectionLabel("Camera defaults")
+            ValueRow("Open in", s.startMode.label, "Which mode the camera starts in") { vm.cycleStartMode() }
+            ValueRow("Start camera", s.startCamera.label, "Rear or front when the app opens") { vm.cycleStartCamera() }
+            SectionLabel("Photo")
+            ValueRow("JPEG quality", s.jpegQuality.label, "Higher quality means bigger files") { vm.cycleJpegQuality() }
+            ToggleRow("Prioritize speed", "Faster shots with a little less processing", s.fastCapture) { vm.setFastCapture(it) }
+            SettingRow("Look", "${s.look.label}. Pick one with the LOOK button on the camera screen.")
+            SectionLabel("Video")
+            ValueRow("Video quality", s.videoQuality.label, "Uses the best your phone supports if this isn't available") { vm.cycleVideoQuality() }
+            ToggleRow("Record audio", "Needs microphone permission", s.recordAudio) { vm.setRecordAudio(it) }
             SectionLabel("Viewfinder")
-            SettingRow("Gridlines", s.guide.label, onClick = onGuides)
+            SettingRow("Gridlines", "${s.guide.label}. Color, opacity and thickness inside.", onClick = onGuides)
             ToggleRow("Histogram", "Live brightness graph (photo and pro modes)", UiFlag.HISTOGRAM in s.flags) { vm.toggleFlag(UiFlag.HISTOGRAM) }
-            SectionLabel("Capture")
+            SectionLabel("Capture feedback")
             ToggleRow("Shutter sound", "Plays a click when a photo is taken", s.shutterSound) { vm.setShutterSound(it) }
             ToggleRow("Volume buttons take photos", "Works while the camera screen is open", s.volumeShutter) { vm.setVolumeShutter(it) }
             ToggleRow("Haptics", "Vibrate on shutter press", UiFlag.HAPTICS in s.flags) { vm.toggleFlag(UiFlag.HAPTICS) }
+            SectionLabel("Interface and accessibility")
+            ToggleRow("Reduce animations", "Screens switch instantly", s.reduceMotion) { vm.setReduceMotion(it) }
+            ToggleRow("Larger camera text", "Bigger labels on the camera controls", s.largeText) { vm.setLargeText(it) }
+            SectionLabel("Storage")
+            SettingRow("Fovea storage", storage)
+            SectionLabel("Permissions")
+            SettingRow("Camera", if (camOk) "Allowed" else "Not allowed. Tap to open app settings.", onClick = openAppSettings)
+            SettingRow("Microphone", if (micOk) "Allowed" else "Not allowed (video will have no sound). Tap to open app settings.", onClick = openAppSettings)
             SectionLabel("Privacy")
-            SettingRow("Location tagging", "Off. Fovea does not read your location.")
+            SettingRow("Location tagging", "Off. Fovea does not read your location and adds none to photos.")
+            SettingRow("Internet", "Used only to check for app updates")
             SectionLabel("Updates")
             UpdateSection(updates)
             SectionLabel("Device")
             SettingRow("Device capabilities", "What this phone's camera reports", onClick = onCaps)
             SettingRow("UI states preview", "Loading, empty, permission and error layouts", onClick = onStates)
-            SettingRow("Restore default settings", "Photos and presets are not deleted", onClick = { confirmReset = true })
+            SettingRow("Restore default settings", "Photos, videos and presets are not deleted", onClick = { confirmReset = true })
             SettingRow("About", "Version and project info", onClick = onAbout)
         }
     }
@@ -106,12 +166,31 @@ private fun UpdateSection(updates: UpdateManager) {
 fun GuidesScreen(vm: CameraViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsState()
     ScreenScaffold("Gridlines", onBack) {
-        Box(
-            Modifier.padding(Fovea.ScreenPadding).fillMaxWidth().aspectRatio(4f / 3f)
-                .clip(RoundedCornerShape(10.dp)).background(Fovea.Graphite)
-        ) { GuideOverlay(s.guide, Modifier.matchParentSize()) }
-        LazyColumn {
-            items(GuideType.values().toList()) { g ->
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            Box(
+                Modifier.padding(Fovea.ScreenPadding).fillMaxWidth().aspectRatio(4f / 3f)
+                    .clip(RoundedCornerShape(10.dp)).background(Fovea.Graphite)
+            ) {
+                GuideOverlay(s.guide, Modifier.matchParentSize(), Color(s.guideColor.argb).copy(alpha = s.guideOpacity), s.guideThickness)
+            }
+            SectionLabel("Color")
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+                GuideColor.values().forEach { c -> FoveaChip(c.label, { vm.setGuideColor(c) }, selected = c == s.guideColor) }
+            }
+            SectionLabel("Opacity")
+            Slider(
+                value = s.guideOpacity, onValueChange = { vm.setGuideOpacity(it) }, valueRange = 0.2f..1f,
+                modifier = Modifier.padding(horizontal = Fovea.ScreenPadding),
+                colors = SliderDefaults.colors(thumbColor = Fovea.Accent, activeTrackColor = Fovea.Accent, inactiveTrackColor = Fovea.Line)
+            )
+            SectionLabel("Thickness")
+            Slider(
+                value = s.guideThickness, onValueChange = { vm.setGuideThickness(it) }, valueRange = 1f..4f,
+                modifier = Modifier.padding(horizontal = Fovea.ScreenPadding),
+                colors = SliderDefaults.colors(thumbColor = Fovea.Accent, activeTrackColor = Fovea.Accent, inactiveTrackColor = Fovea.Line)
+            )
+            SectionLabel("Style")
+            GuideType.values().forEach { g ->
                 SettingRow(g.label, g.blurb, onClick = { vm.setGuide(g) }) {
                     if (g == s.guide) Icon(Icons.Filled.Check, "Selected", tint = Fovea.Accent)
                 }

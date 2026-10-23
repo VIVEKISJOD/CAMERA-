@@ -68,7 +68,13 @@ class CameraViewModelTest {
     }
     @Test fun persistedRoundTrip() {
         val vm = CameraViewModel()
-        val p = PersistedSettings(GuideType.SPIRAL, AspectOption.R169, true, false, false, true, Look.VIVID_POP)
+        val p = PersistedSettings(
+            guide = GuideType.SPIRAL, aspect = AspectOption.R169, histogram = true, haptics = false,
+            shutterSound = false, volumeShutter = true, look = Look.VIVID_POP,
+            jpegQuality = JpegQuality.STANDARD, fastCapture = true, videoQuality = VideoQuality.HD,
+            recordAudio = false, guideColor = GuideColor.LIME, guideOpacity = 0.8f, guideThickness = 2f,
+            reduceMotion = true, largeText = true
+        )
         vm.applyPersisted(p)
         assertEquals(p, vm.state.value.toPersisted())
     }
@@ -109,4 +115,53 @@ class LookMathTest {
         }
     }
     @Test fun matrixHasTwentyValues() = assertEquals(20, LookMath.matrix(Look.RICH_CONTRAST).size)
+}
+
+class Stage3SettingsTest {
+    @Test fun startModeOverridesLastMode() {
+        val vm = CameraViewModel()
+        vm.applyPersisted(PersistedSettings(startMode = StartMode.VIDEO, lastMode = CaptureMode.PHOTO), applyStart = true)
+        assertEquals(CaptureMode.VIDEO, vm.state.value.mode)
+    }
+    @Test fun lastModeIsUsedWhenStartIsLast() {
+        val vm = CameraViewModel()
+        vm.applyPersisted(PersistedSettings(startMode = StartMode.LAST, lastMode = CaptureMode.PRO, lastFront = true, startCamera = StartCamera.LAST), applyStart = true)
+        assertEquals(CaptureMode.PRO, vm.state.value.mode)
+        assertTrue(vm.state.value.frontCamera)
+    }
+    @Test fun restoreDefaultsDoesNotChangeCurrentModeOrPresets() {
+        val vm = CameraViewModel()
+        vm.setMode(CaptureMode.VIDEO); vm.addPreset("Keep", "", PresetCategory.LOOK)
+        vm.cycleJpegQuality(); vm.setLargeText(true)
+        vm.restoreDefaults()
+        assertEquals(CaptureMode.VIDEO, vm.state.value.mode)
+        assertEquals(JpegQuality.MAX, vm.state.value.jpegQuality)
+        assertFalse(vm.state.value.largeText)
+        assertEquals(1, vm.state.value.presets.size)
+    }
+    @Test fun cyclesWrapAround() {
+        val vm = CameraViewModel()
+        repeat(JpegQuality.values().size) { vm.cycleJpegQuality() }
+        assertEquals(JpegQuality.MAX, vm.state.value.jpegQuality)
+    }
+    @Test fun guideStyleIsClamped() {
+        val vm = CameraViewModel(); vm.setGuideOpacity(5f); vm.setGuideThickness(0f)
+        assertEquals(1f, vm.state.value.guideOpacity, 0f)
+        assertEquals(1f, vm.state.value.guideThickness, 0f)
+    }
+}
+
+class MoreLooksTest {
+    @Test fun noirIsGray() {
+        val p = LookMath.apply(200, 120, 40, Look.NOIR)
+        assertTrue(p[0] == p[1] && p[1] == p[2])
+    }
+    @Test fun looksKeepOriginalOrder() {
+        assertEquals(0, Look.OFF.ordinal); assertEquals(1, Look.VIVID_POP.ordinal); assertEquals(6, Look.NATURAL_PLUS.ordinal)
+    }
+    @Test fun shortNamesAreUniqueAndShort() {
+        val shorts = Look.values().map { it.short }
+        assertEquals(shorts.size, shorts.toSet().size)
+        assertTrue(shorts.all { it.length <= 7 })
+    }
 }

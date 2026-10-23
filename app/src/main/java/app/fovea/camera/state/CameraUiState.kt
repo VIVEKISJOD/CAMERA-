@@ -24,6 +24,14 @@ enum class PresetCategory(val label: String) {
     CAMERA("Camera"), LOOK("Look"), GUIDE("Guide"), COMBINED("Combined")
 }
 enum class UiFlag { HISTOGRAM, HAPTICS }
+enum class StartMode(val label: String) { LAST("Last used"), PHOTO("Photo"), PRO("Pro"), VIDEO("Video") }
+enum class StartCamera(val label: String) { LAST("Last used"), REAR("Rear"), FRONT("Front") }
+enum class JpegQuality(val label: String, val value: Int) { MAX("Maximum", 100), HIGH("High", 95), STANDARD("Standard", 85) }
+enum class VideoQuality(val label: String) { UHD("4K (if supported)"), FHD("Full HD 1080p"), HD("HD 720p"), SD("SD") }
+enum class GuideColor(val label: String, val argb: Long) {
+    WHITE("White", 0xFFFFFFFF), LIME("Lime", 0xFFB6F23C), YELLOW("Yellow", 0xFFFFD60A),
+    RED("Red", 0xFFFF453A), CYAN("Cyan", 0xFF64D2FF)
+}
 enum class AwbOption(val label: String) {
     AUTO("Auto"), DAYLIGHT("Daylight"), CLOUDY("Cloudy"), TUNGSTEN("Tungsten"), FLUORESCENT("Fluor.")
 }
@@ -45,7 +53,20 @@ data class PersistedSettings(
     val haptics: Boolean = true,
     val shutterSound: Boolean = true,
     val volumeShutter: Boolean = false,
-    val look: Look = Look.OFF
+    val look: Look = Look.OFF,
+    val startMode: StartMode = StartMode.LAST,
+    val startCamera: StartCamera = StartCamera.LAST,
+    val lastMode: CaptureMode = CaptureMode.PHOTO,
+    val lastFront: Boolean = false,
+    val jpegQuality: JpegQuality = JpegQuality.MAX,
+    val fastCapture: Boolean = false,
+    val videoQuality: VideoQuality = VideoQuality.FHD,
+    val recordAudio: Boolean = true,
+    val guideColor: GuideColor = GuideColor.WHITE,
+    val guideOpacity: Float = 0.55f,
+    val guideThickness: Float = 1f,
+    val reduceMotion: Boolean = false,
+    val largeText: Boolean = false
 )
 
 data class CameraUiState(
@@ -68,6 +89,17 @@ data class CameraUiState(
     val shutterSound: Boolean = true,
     val volumeShutter: Boolean = false,
     val look: Look = Look.OFF,
+    val startMode: StartMode = StartMode.LAST,
+    val startCamera: StartCamera = StartCamera.LAST,
+    val jpegQuality: JpegQuality = JpegQuality.MAX,
+    val fastCapture: Boolean = false,
+    val videoQuality: VideoQuality = VideoQuality.FHD,
+    val recordAudio: Boolean = true,
+    val guideColor: GuideColor = GuideColor.WHITE,
+    val guideOpacity: Float = 0.55f,
+    val guideThickness: Float = 1f,
+    val reduceMotion: Boolean = false,
+    val largeText: Boolean = false,
     val flags: Set<UiFlag> = setOf(UiFlag.HAPTICS),
     val presets: List<Preset> = emptyList(),
     val query: String = "",
@@ -78,7 +110,13 @@ data class CameraUiState(
 fun CameraUiState.effectiveAspect(): AspectOption = if (mode == CaptureMode.VIDEO) AspectOption.R169 else aspect
 
 fun CameraUiState.toPersisted() = PersistedSettings(
-    guide, aspect, UiFlag.HISTOGRAM in flags, UiFlag.HAPTICS in flags, shutterSound, volumeShutter, look
+    guide = guide, aspect = aspect,
+    histogram = UiFlag.HISTOGRAM in flags, haptics = UiFlag.HAPTICS in flags,
+    shutterSound = shutterSound, volumeShutter = volumeShutter, look = look,
+    startMode = startMode, startCamera = startCamera, lastMode = mode, lastFront = frontCamera,
+    jpegQuality = jpegQuality, fastCapture = fastCapture, videoQuality = videoQuality, recordAudio = recordAudio,
+    guideColor = guideColor, guideOpacity = guideOpacity, guideThickness = guideThickness,
+    reduceMotion = reduceMotion, largeText = largeText
 )
 
 fun CameraUiState.visiblePresets(): List<Preset> {

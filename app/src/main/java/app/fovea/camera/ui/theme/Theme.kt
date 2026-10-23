@@ -4,11 +4,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/** 1.0 normally, larger when the user turns on 'Larger camera text'. */
+val LocalUiScale = compositionLocalOf { 1f }
 
 object Fovea {
     val Black = Color(0xFF0B0B0C)

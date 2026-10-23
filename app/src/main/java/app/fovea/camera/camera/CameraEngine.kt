@@ -39,6 +39,9 @@ import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.AwbOption
 import app.fovea.camera.state.FlashMode
 import app.fovea.camera.state.Look
+import app.fovea.camera.state.VideoQuality
+import android.os.Environment
+import android.os.StatFs
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +60,7 @@ import kotlin.math.roundToInt
  */
 @OptIn(ExperimentalCamera2Interop::class)
 class CameraEngine(private val context: Context) {
+    private val MIN_FREE_BYTES = 50L * 1024 * 1024
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val lookExecutor = Executors.newSingleThreadExecutor()
@@ -104,9 +108,15 @@ class CameraEngine(private val context: Context) {
             val useCases = mutableListOf<UseCase>(preview)
 
             if (cfg.video) {
+                val wanted = when (cfg.videoQuality) {
+                    VideoQuality.UHD -> Quality.UHD
+                    VideoQuality.FHD -> Quality.FHD
+                    VideoQuality.HD -> Quality.HD
+                    VideoQuality.SD -> Quality.SD
+                }
                 val recorder = Recorder.Builder()
                     .setQualitySelector(
-                        QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+                        QualitySelector.from(wanted, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
                     ).build()
                 val vc = VideoCapture.withOutput(recorder)
                 videoCapture = vc
@@ -115,7 +125,11 @@ class CameraEngine(private val context: Context) {
             } else {
                 val ic = ImageCapture.Builder()
                     .setResolutionSelector(selector)
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .setCaptureMode(
+                        if (cfg.fastCapture) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                        else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                    )
+                    .setJpegQuality(cfg.jpegQuality)
                     .setFlashMode(flashConst(cfg.flash))
                     .build()
                 imageCapture = ic
@@ -264,11 +278,16 @@ class CameraEngine(private val context: Context) {
         AwbOption.FLUORESCENT -> CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT
     }
 
+    private fun freeBytes(): Long = try {
+        StatFs(Environment.getExternalStorageDirectory().absolutePath).availableBytes
+    } catch (e: Exception) { Long.MAX_VALUE }
+
     private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 
     fun takePhoto(playSound: Boolean, look: Look, onDone: (Boolean) -> Unit) {
         val ic = imageCapture
         if (ic == null) { events.tryEmit("Camera is not ready yet."); onDone(false); return }
+        if (freeBytes() < MIN_FREE_BYTES) { events.tryEmit("Storage is almost full. Free some space to take photos."); onDone(false); return }
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "FOVEA_${stamp()}")
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -309,6 +328,7 @@ class CameraEngine(private val context: Context) {
         if (vc == null) { events.tryEmit("Video is not ready yet."); return }
         val current = recording
         if (current != null) { current.stop(); return }
+        if (freeBytes() < MIN_FREE_BYTES * 4) { events.tryEmit("Storage is almost full. Free some space to record video."); return }
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "FOVEA_${stamp()}")
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")

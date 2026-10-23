@@ -18,7 +18,12 @@ Uploads the stage ZIP to the repo root. A GitHub Action (`ci/unzip-build.yml`, p
 Flash, HDR, aspect ratio, timer, tilt-shift, timed burst, watermark; modes Pro, Video, Photo, Portrait, Documents, Ultra HD, Night, Slow motion, Time-lapse, Long exposure, Panorama, Dual video; gridlines, preserve settings, shutter sound, volume-button function, save location, anti-banding, restore defaults; histogram, DNG/HEIF, manual focus/temp/tint/exposure; color mixer, vignette, filters, frame editing.
 
 ## Six stages (one at a time, wait for authorization)
-1 UI — DONE. 2 Real camera — DONE (this ZIP, untested). 3 Complete settings. 4 Refinement/stability. 5 Offline 8-char preset codes (compact versioned bit-packed binary, deterministic, validated) + guide customization. 6 Public release (secret-based signing key, README, license, privacy doc).
+1 UI — DONE. 2 Real camera — DONE (owner confirmed it works on his phone). 3 Complete settings — IN PROGRESS (this ZIP, uncompiled). 4 Refinement/stability. 5 Offline 8-char preset codes (compact versioned bit-packed binary, deterministic, validated) + guide customization. 6 Public release (secret-based signing key, README, license, privacy doc).
+
+## Stage 3 status (this ZIP; written, NOT compiled or tested)
+Real, persisted settings (SharedPreferences via SettingsStore): open-in mode and start camera (or last used), JPEG quality (100/95/85), prioritize speed (CameraX min-latency), video quality (4K/FHD/HD/SD with fallback), record audio, gridline color/opacity/thickness (Gridlines screen), histogram, shutter sound, volume-button shutter, haptics, reduce animations, larger camera text (x1.15), selected Look. Settings screen also shows storage (file count + free space), permission status (opens app settings), privacy facts, and Restore defaults (never deletes photos/videos/presets and does not change the current mode). Low-storage guard blocks capture under 50 MB (photo) / 200 MB (video). 13 more Looks added (20 total) in state/Look.kt, APPEND ONLY.
+Stage 3 still missing: language infrastructure (string resources/locale config), metadata options, custom save folder, accent/theme choices, manual-control defaults, preset behavior settings (Stage 5), location tagging (intentionally not offered: app never reads location).
+Likely next small items (bundle with each fix): remember flash/timer, time-lapse or burst, tilt-shift/watermark, DNG capture where hardware allows.
 
 ## Stage 2 status
 Update 2.1 (Looks, written but NOT compiled): 7 built-in color looks (Vivid Pop, Warm Gold, Cool Teal, Rich Contrast, Soft Fade, Natural+, Off) in state/Look.kt (pure color math, unit tested) and camera/LookProcessor.kt. Chosen via the LOOK token on the camera screen (photo/pro only). On capture the original is kept and a graded copy (max ~8 MP, upright, JPEG 95) is saved as a second file `..._<LOOK>.jpg`. Live preview uses TextureView.setLayerPaint (approximation, color only). Selected look is persisted. These looks are the planned "enumerated built-in looks" for the Stage 5 preset codes; do not change their numbers without a migration. Limits: color grade only (no HDR+/depth/blur), no video looks, no highlights/shadows curves yet.
@@ -29,7 +34,7 @@ Code map (`app/src/main/java/app/fovea/camera/`): camera/ (CameraEngine = only c
 Stack: Kotlin 2.0.20, AGP 8.6.1, Gradle 8.9 (CI), Compose BOM 2024.09.00, CameraX 1.3.4, minSdk 29, compileSdk 35.
 
 ## Test status (honest)
-Stage 2 base compiled on GitHub Actions and the owner confirmed the camera app works on his phone (tests passed after one fix). Update 2.1 (Looks) is NOT yet compiled or tested. If CI fails, ask for the `e: file` lines or the lines near `FAILED` in the log.
+Stage 2 base compiled on GitHub Actions and the owner confirmed the camera app works on his phone (tests passed after one fix). Update 2.1 (Looks) compiled and the owner confirmed it works; Stage 3 (above) is NOT yet compiled or tested. If CI fails, ask for the `e: file` lines or the lines near `FAILED` in the log.
 
 ## Known issues / notes
 - Signing key `app/fovea-personal.jks` is committed on purpose (personal use). The Stage 1 APK used a different key: uninstall Stage 1 once before installing Stage 2; later updates install over each other.

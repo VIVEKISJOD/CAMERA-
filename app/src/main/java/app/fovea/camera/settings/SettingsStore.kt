@@ -1,24 +1,37 @@
 package app.fovea.camera.settings
 
 import android.content.Context
-import app.fovea.camera.state.AspectOption
-import app.fovea.camera.state.GuideType
-import app.fovea.camera.state.Look
-import app.fovea.camera.state.PersistedSettings
+import app.fovea.camera.state.*
 
 class SettingsStore(context: Context) {
     private val p = context.getSharedPreferences("fovea_settings", Context.MODE_PRIVATE)
 
+    private inline fun <reified E : Enum<E>> enumOf(key: String, default: E): E =
+        runCatching { enumValueOf<E>(p.getString(key, default.name)!!) }.getOrDefault(default)
+
     fun load(): PersistedSettings {
         val d = PersistedSettings()
         return PersistedSettings(
-            guide = runCatching { GuideType.valueOf(p.getString("guide", d.guide.name)!!) }.getOrDefault(d.guide),
-            aspect = runCatching { AspectOption.valueOf(p.getString("aspect", d.aspect.name)!!) }.getOrDefault(d.aspect),
+            guide = enumOf("guide", d.guide),
+            aspect = enumOf("aspect", d.aspect),
             histogram = p.getBoolean("histogram", d.histogram),
             haptics = p.getBoolean("haptics", d.haptics),
             shutterSound = p.getBoolean("shutterSound", d.shutterSound),
             volumeShutter = p.getBoolean("volumeShutter", d.volumeShutter),
-            look = runCatching { Look.valueOf(p.getString("look", d.look.name)!!) }.getOrDefault(d.look)
+            look = enumOf("look", d.look),
+            startMode = enumOf("startMode", d.startMode),
+            startCamera = enumOf("startCamera", d.startCamera),
+            lastMode = enumOf("lastMode", d.lastMode),
+            lastFront = p.getBoolean("lastFront", d.lastFront),
+            jpegQuality = enumOf("jpegQuality", d.jpegQuality),
+            fastCapture = p.getBoolean("fastCapture", d.fastCapture),
+            videoQuality = enumOf("videoQuality", d.videoQuality),
+            recordAudio = p.getBoolean("recordAudio", d.recordAudio),
+            guideColor = enumOf("guideColor", d.guideColor),
+            guideOpacity = p.getFloat("guideOpacity", d.guideOpacity),
+            guideThickness = p.getFloat("guideThickness", d.guideThickness),
+            reduceMotion = p.getBoolean("reduceMotion", d.reduceMotion),
+            largeText = p.getBoolean("largeText", d.largeText)
         )
     }
 
@@ -31,6 +44,19 @@ class SettingsStore(context: Context) {
             .putBoolean("shutterSound", s.shutterSound)
             .putBoolean("volumeShutter", s.volumeShutter)
             .putString("look", s.look.name)
+            .putString("startMode", s.startMode.name)
+            .putString("startCamera", s.startCamera.name)
+            .putString("lastMode", s.lastMode.name)
+            .putBoolean("lastFront", s.lastFront)
+            .putString("jpegQuality", s.jpegQuality.name)
+            .putBoolean("fastCapture", s.fastCapture)
+            .putString("videoQuality", s.videoQuality.name)
+            .putBoolean("recordAudio", s.recordAudio)
+            .putString("guideColor", s.guideColor.name)
+            .putFloat("guideOpacity", s.guideOpacity)
+            .putFloat("guideThickness", s.guideThickness)
+            .putBoolean("reduceMotion", s.reduceMotion)
+            .putBoolean("largeText", s.largeText)
             .apply()
     }
 }

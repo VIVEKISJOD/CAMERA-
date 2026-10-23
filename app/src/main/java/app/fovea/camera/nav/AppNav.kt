@@ -16,6 +16,7 @@ import app.fovea.camera.state.CameraViewModel
 import app.fovea.camera.state.toPersisted
 import app.fovea.camera.ui.camera.CameraScreen
 import app.fovea.camera.ui.screens.*
+import app.fovea.camera.ui.theme.LocalUiScale
 import app.fovea.camera.update.UpdateManager
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -40,7 +41,8 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
     val ctx = LocalContext.current
     val store = remember { SettingsStore(ctx) }
     val updates = remember { UpdateManager(ctx.applicationContext) }
-    remember { vm.applyPersisted(store.load()); true }
+    remember { vm.applyPersisted(store.load(), applyStart = true); true }
+    val ui by vm.state.collectAsState()
     LaunchedEffect(Unit) {
         vm.state.map { it.toPersisted() }.distinctUntilChanged().drop(1).collect { store.save(it) }
     }
@@ -49,10 +51,13 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
     val back: () -> Unit = { nav.popBackStack() }
     var reviewItem by remember { mutableStateOf<MediaItem?>(null) }
 
+    val inMs = if (ui.reduceMotion) 0 else 180
+    val outMs = if (ui.reduceMotion) 0 else 120
+    CompositionLocalProvider(LocalUiScale provides (if (ui.largeText) 1.15f else 1f)) {
     NavHost(
         navController = nav, startDestination = Routes.CAMERA,
-        enterTransition = { fadeIn(tween(180)) }, exitTransition = { fadeOut(tween(120)) },
-        popEnterTransition = { fadeIn(tween(180)) }, popExitTransition = { fadeOut(tween(120)) }
+        enterTransition = { fadeIn(tween(inMs)) }, exitTransition = { fadeOut(tween(outMs)) },
+        popEnterTransition = { fadeIn(tween(inMs)) }, popExitTransition = { fadeOut(tween(outMs)) }
     ) {
         composable(Routes.CAMERA) {
             CameraScreen(
@@ -75,5 +80,6 @@ fun AppNav(engine: CameraEngine, vm: CameraViewModel = viewModel()) {
         composable(Routes.CAPS) { CapabilitiesScreen(engine, back) }
         composable(Routes.ABOUT) { AboutScreen(back) }
         composable(Routes.STATES) { StatesPreviewScreen(back) }
+    }
     }
 }

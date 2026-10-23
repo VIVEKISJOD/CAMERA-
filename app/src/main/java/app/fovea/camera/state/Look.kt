@@ -25,7 +25,21 @@ enum class Look(
     COOL_TEAL("Cool Teal", "TEAL", "Cooler shadows, clean blues", saturation = 1.1f, contrast = 1.1f, warmth = -0.5f, tint = -0.2f, vignette = 0.1f),
     RICH_CONTRAST("Rich Contrast", "RICH", "Deep blacks, strong punch", saturation = 1.2f, contrast = 1.3f, brightness = -6f, vignette = 0.2f),
     SOFT_FADE("Soft Fade", "FADE", "Light, matte, gentle colors", saturation = 0.9f, contrast = 0.9f, brightness = 8f, warmth = 0.1f, fade = 0.4f),
-    NATURAL_PLUS("Natural+", "NATURAL", "Slight boost, true-to-life", saturation = 1.12f, contrast = 1.06f, warmth = 0.05f)
+    NATURAL_PLUS("Natural+", "NATURAL", "Slight boost, true-to-life", saturation = 1.12f, contrast = 1.06f, warmth = 0.05f),
+    // Added in Stage 3. APPEND ONLY: Stage 5 preset codes will refer to looks by position.
+    GOLDEN_HOUR("Golden Hour", "GOLDEN", "Warm sunset glow", saturation = 1.25f, contrast = 1.1f, brightness = 8f, warmth = 0.8f, tint = 0.05f, fade = 0.05f, vignette = 0.18f),
+    CINEMATIC("Cinematic", "CINE", "Moody, filmic contrast", saturation = 1.05f, contrast = 1.22f, brightness = -4f, warmth = 0.2f, tint = -0.15f, fade = 0.15f, vignette = 0.28f),
+    NOIR("Noir", "NOIR", "Black and white, deep contrast", saturation = 0f, contrast = 1.3f, brightness = -4f, vignette = 0.3f),
+    MONO_SOFT("Soft Mono", "MONO", "Gentle black and white", saturation = 0f, contrast = 0.95f, brightness = 6f, fade = 0.2f),
+    PASTEL("Pastel", "PASTEL", "Light, airy and soft", saturation = 0.8f, contrast = 0.85f, brightness = 12f, warmth = 0.1f, fade = 0.3f),
+    ELECTRIC("Electric", "NEON", "Bold, cool neon-like colors", saturation = 1.6f, contrast = 1.2f, warmth = -0.25f, tint = 0.3f, vignette = 0.15f),
+    TROPICAL("Tropical", "TROPIC", "Lush greens and bright color", saturation = 1.45f, contrast = 1.15f, brightness = 3f, warmth = 0.1f, tint = -0.3f),
+    SUNSET_BLAZE("Sunset Blaze", "BLAZE", "Hot oranges and reds", saturation = 1.4f, contrast = 1.2f, warmth = 0.85f, vignette = 0.2f),
+    BRIGHT_CLEAN("Bright & Clean", "CLEAN", "Fresh, bright and clear", saturation = 1.15f, contrast = 1.05f, brightness = 14f, warmth = -0.05f),
+    MOODY_DARK("Moody Dark", "MOODY", "Dark, rich and dramatic", saturation = 0.95f, contrast = 1.2f, brightness = -14f, warmth = -0.2f, fade = 0.1f, vignette = 0.35f),
+    RETRO_FILM("Retro Film", "RETRO", "Faded vintage film color", saturation = 0.85f, contrast = 1.05f, warmth = 0.3f, tint = 0.1f, fade = 0.3f, vignette = 0.25f),
+    SKIN_GLOW("Skin Glow", "GLOW", "Soft, warm and flattering", saturation = 1.08f, contrast = 0.95f, brightness = 8f, warmth = 0.25f, fade = 0.1f),
+    ULTRA_VIVID("Ultra Vivid", "ULTRA", "Maximum color pop", saturation = 1.6f, contrast = 1.15f, brightness = 2f, warmth = 0.1f, vignette = 0.1f)
 }
 
 /** Pure color math, so it can be unit tested without Android. Produces an Android-style 4x5 matrix. */

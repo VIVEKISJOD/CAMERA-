@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -55,6 +56,7 @@ import app.fovea.camera.camera.*
 import app.fovea.camera.state.*
 import app.fovea.camera.ui.components.*
 import app.fovea.camera.ui.theme.Fovea
+import app.fovea.camera.ui.theme.LocalUiScale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -122,7 +124,7 @@ fun CameraScreen(
         if (count > 0 || !camGranted) return
         if (UiFlag.HAPTICS in st.flags) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (st.mode == CaptureMode.VIDEO) {
-            engine.toggleRecording(audioGranted) { rec -> vm.setRecording(rec) }
+            engine.toggleRecording(audioGranted && st.recordAudio) { rec -> vm.setRecording(rec) }
         } else {
             scope.launch {
                 var i = st.timer.seconds
@@ -146,8 +148,11 @@ fun CameraScreen(
 
     val wantHist = UiFlag.HISTOGRAM in s.flags
     val isVideo = s.mode == CaptureMode.VIDEO
-    LaunchedEffect(camGranted, s.frontCamera, isVideo, s.aspect, wantHist) {
-        if (camGranted) engine.bind(activity, previewView, BindConfig(s.frontCamera, isVideo, s.aspect, s.flash, wantHist))
+    LaunchedEffect(camGranted, s.frontCamera, isVideo, s.aspect, wantHist, s.jpegQuality, s.fastCapture, s.videoQuality) {
+        if (camGranted) engine.bind(
+            activity, previewView,
+            BindConfig(s.frontCamera, isVideo, s.aspect, s.flash, wantHist, s.jpegQuality.value, s.fastCapture, s.videoQuality)
+        )
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
     // Live preview of the look is an approximation (color only, no vignette).
@@ -227,6 +232,9 @@ private fun TopStrip(
 }
 
 @Composable
+private fun uiSp(v: Float) = (v * LocalUiScale.current).sp
+
+@Composable
 private fun TopToken(title: String, value: String, active: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val color = when {
         !enabled -> Fovea.Muted.copy(alpha = 0.5f)
@@ -237,8 +245,8 @@ private fun TopToken(title: String, value: String, active: Boolean, enabled: Boo
         Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 48.dp).clickable(enabled = enabled, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
-        Text(title, color = Fovea.Muted, fontSize = 9.sp, letterSpacing = 1.sp)
-        Text(value, color = color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, color = Fovea.Muted, fontSize = uiSp(9f), letterSpacing = 1.sp)
+        Text(value, color = color, fontSize = uiSp(12f), fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -264,7 +272,10 @@ private fun Viewfinder(
             }
     ) {
         AndroidView(factory = { previewView }, modifier = Modifier.matchParentSize())
-        if (s.guide != GuideType.NONE) GuideOverlay(s.guide, Modifier.matchParentSize())
+        if (s.guide != GuideType.NONE) GuideOverlay(
+            s.guide, Modifier.matchParentSize(),
+            Color(s.guideColor.argb).copy(alpha = s.guideOpacity), s.guideThickness
+        )
         val ring = Fovea.Accent
         focus?.let { p ->
             Canvas(Modifier.matchParentSize()) {
@@ -417,8 +428,8 @@ private fun ProToken(title: String, value: String, selected: Boolean, onClick: (
         Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 56.dp).clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
-        Text(title, color = Fovea.Muted, fontSize = 9.sp, letterSpacing = 1.sp)
-        Text(value, color = if (selected) Fovea.Accent else Fovea.Text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, color = Fovea.Muted, fontSize = uiSp(9f), letterSpacing = 1.sp)
+        Text(value, color = if (selected) Fovea.Accent else Fovea.Text, fontSize = uiSp(12f), fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -437,7 +448,7 @@ private fun ModeRow(s: CameraUiState, vm: CameraViewModel, onMore: () -> Unit) {
 private fun ModeToken(label: String, selected: Boolean, dim: Boolean = false, onClick: () -> Unit) {
     Box(Modifier.heightIn(min = Fovea.TouchTarget).clickable(onClick = onClick).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
         Text(
-            label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp,
+            label, fontSize = uiSp(13f), fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp,
             color = when { selected -> Fovea.Accent; dim -> Fovea.Muted.copy(alpha = 0.6f); else -> Fovea.Text }
         )
     }

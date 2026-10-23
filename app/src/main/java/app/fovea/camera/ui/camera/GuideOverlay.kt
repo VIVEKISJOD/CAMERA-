@@ -23,10 +23,11 @@ import kotlin.math.sin
 fun GuideOverlay(
     type: GuideType,
     modifier: Modifier = Modifier,
-    color: Color = Color.White.copy(alpha = 0.55f)
+    color: Color = Color.White.copy(alpha = 0.55f),
+    strokeDp: Float = 1f
 ) {
     Canvas(modifier.fillMaxSize().clipToBounds()) {
-        drawGuide(type, size.width, size.height, color, 1.dp.toPx())
+        drawGuide(type, size.width, size.height, color, strokeDp.dp.toPx())
     }
 }
 

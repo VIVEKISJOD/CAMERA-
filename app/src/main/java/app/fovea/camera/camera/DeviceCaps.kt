@@ -3,6 +3,7 @@ package app.fovea.camera.camera
 import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.AwbOption
 import app.fovea.camera.state.FlashMode
+import app.fovea.camera.state.VideoQuality
 
 /** What the active camera really reports. Nothing here is assumed. */
 data class DeviceCaps(
@@ -35,7 +36,10 @@ data class BindConfig(
     val video: Boolean,
     val aspect: AspectOption,
     val flash: FlashMode,
-    val histogram: Boolean
+    val histogram: Boolean,
+    val jpegQuality: Int = 100,
+    val fastCapture: Boolean = false,
+    val videoQuality: VideoQuality = VideoQuality.FHD
 )
 
 data class ManualSettings(
