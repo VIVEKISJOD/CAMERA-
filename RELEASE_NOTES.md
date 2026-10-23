@@ -1,1 +1,1 @@
-Stage 2: real camera (photo, video, zoom, tap-focus, EV, flash, timer, pro controls), gallery, in-app updates.
+Update 2.1: built-in color Looks (Vivid Pop, Warm Gold, Cool Teal, Rich Contrast, Soft Fade, Natural+). Original photo is always kept.

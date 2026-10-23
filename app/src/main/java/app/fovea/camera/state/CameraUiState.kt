@@ -44,7 +44,8 @@ data class PersistedSettings(
     val histogram: Boolean = false,
     val haptics: Boolean = true,
     val shutterSound: Boolean = true,
-    val volumeShutter: Boolean = false
+    val volumeShutter: Boolean = false,
+    val look: Look = Look.OFF
 )
 
 data class CameraUiState(
@@ -66,6 +67,7 @@ data class CameraUiState(
     val awb: AwbOption = AwbOption.AUTO,
     val shutterSound: Boolean = true,
     val volumeShutter: Boolean = false,
+    val look: Look = Look.OFF,
     val flags: Set<UiFlag> = setOf(UiFlag.HAPTICS),
     val presets: List<Preset> = emptyList(),
     val query: String = "",
@@ -76,7 +78,7 @@ data class CameraUiState(
 fun CameraUiState.effectiveAspect(): AspectOption = if (mode == CaptureMode.VIDEO) AspectOption.R169 else aspect
 
 fun CameraUiState.toPersisted() = PersistedSettings(
-    guide, aspect, UiFlag.HISTOGRAM in flags, UiFlag.HAPTICS in flags, shutterSound, volumeShutter
+    guide, aspect, UiFlag.HISTOGRAM in flags, UiFlag.HAPTICS in flags, shutterSound, volumeShutter, look
 )
 
 fun CameraUiState.visiblePresets(): List<Preset> {

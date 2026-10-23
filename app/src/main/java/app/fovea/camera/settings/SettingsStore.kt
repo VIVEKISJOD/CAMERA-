@@ -3,6 +3,7 @@ package app.fovea.camera.settings
 import android.content.Context
 import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.GuideType
+import app.fovea.camera.state.Look
 import app.fovea.camera.state.PersistedSettings
 
 class SettingsStore(context: Context) {
@@ -16,7 +17,8 @@ class SettingsStore(context: Context) {
             histogram = p.getBoolean("histogram", d.histogram),
             haptics = p.getBoolean("haptics", d.haptics),
             shutterSound = p.getBoolean("shutterSound", d.shutterSound),
-            volumeShutter = p.getBoolean("volumeShutter", d.volumeShutter)
+            volumeShutter = p.getBoolean("volumeShutter", d.volumeShutter),
+            look = runCatching { Look.valueOf(p.getString("look", d.look.name)!!) }.getOrDefault(d.look)
         )
     }
 
@@ -28,6 +30,7 @@ class SettingsStore(context: Context) {
             .putBoolean("haptics", s.haptics)
             .putBoolean("shutterSound", s.shutterSound)
             .putBoolean("volumeShutter", s.volumeShutter)
+            .putString("look", s.look.name)
             .apply()
     }
 }

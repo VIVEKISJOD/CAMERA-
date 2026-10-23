@@ -3,6 +3,10 @@ package app.fovea.camera.ui.camera
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
+import android.view.TextureView
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -21,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -109,6 +114,7 @@ fun CameraScreen(
     }
     var count by remember { mutableIntStateOf(0) }
     var showMore by remember { mutableStateOf(false) }
+    var showLooks by remember { mutableStateOf(false) }
     var latest by remember { mutableStateOf<Uri?>(null) }
 
     fun shutter() {
@@ -122,7 +128,7 @@ fun CameraScreen(
                 var i = st.timer.seconds
                 while (i > 0) { count = i; delay(1000); i-- }
                 count = 0
-                engine.takePhoto(vm.state.value.shutterSound) { }
+                engine.takePhoto(vm.state.value.shutterSound, vm.state.value.look) { }
             }
         }
     }
@@ -144,6 +150,19 @@ fun CameraScreen(
         if (camGranted) engine.bind(activity, previewView, BindConfig(s.frontCamera, isVideo, s.aspect, s.flash, wantHist))
     }
     LaunchedEffect(s.flash, isVideo, bound) { engine.setFlash(s.flash, isVideo) }
+    // Live preview of the look is an approximation (color only, no vignette).
+    LaunchedEffect(s.look, isVideo, bound, camGranted) {
+        repeat(12) {
+            val tv = (0 until previewView.childCount).map { previewView.getChildAt(it) }.firstOrNull { it is TextureView } as? TextureView
+            if (tv != null) {
+                val paint = Paint()
+                if (s.look != Look.OFF && !isVideo) paint.colorFilter = ColorMatrixColorFilter(ColorMatrix(LookMath.matrix(s.look)))
+                tv.setLayerPaint(paint)
+                return@LaunchedEffect
+            }
+            delay(150)
+        }
+    }
     LaunchedEffect(s.ev, bound) { engine.setEv(s.ev) }
     LaunchedEffect(bound, s.mode, s.exposureManual, s.iso, s.shutterNs, s.focusAuto, s.focus, s.awb) {
         if (s.mode == CaptureMode.PRO) {
@@ -157,7 +176,7 @@ fun CameraScreen(
     }
 
     Column(Modifier.fillMaxSize().background(Fovea.Black).statusBarsPadding().navigationBarsPadding()) {
-        TopStrip(s, caps, vm, onGuides, onPresets, onSettings)
+        TopStrip(s, caps, vm, onGuides, onPresets, onSettings, onLook = { showLooks = true })
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
             if (!camGranted) {
                 PermissionNeeded(
@@ -181,12 +200,13 @@ fun CameraScreen(
         CaptureBar(s, latest, camGranted, onShutter = { shutter() }, onGallery = onGallery, onSwitch = { vm.switchCamera() })
     }
     if (showMore) MoreSheet { showMore = false }
+    if (showLooks) LookSheet(s.look, { vm.setLook(it) }) { showLooks = false }
 }
 
 @Composable
 private fun TopStrip(
     s: CameraUiState, caps: DeviceCaps, vm: CameraViewModel,
-    onGuides: () -> Unit, onPresets: () -> Unit, onSettings: () -> Unit
+    onGuides: () -> Unit, onPresets: () -> Unit, onSettings: () -> Unit, onLook: () -> Unit
 ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -196,6 +216,7 @@ private fun TopStrip(
         TopToken("RATIO", s.effectiveAspect().label, false, enabled = s.mode != CaptureMode.VIDEO) { vm.cycleAspect() }
         TopToken("TIMER", s.timer.label, s.timer != TimerOption.OFF, enabled = s.mode != CaptureMode.VIDEO) { vm.cycleTimer() }
         TopToken("GRID", if (s.guide == GuideType.NONE) "OFF" else "ON", s.guide != GuideType.NONE, onClick = onGuides)
+        TopToken("LOOK", s.look.short, s.look != Look.OFF, enabled = s.mode != CaptureMode.VIDEO, onClick = onLook)
         IconButton(onClick = onPresets, modifier = Modifier.size(Fovea.TouchTarget)) {
             Icon(Icons.Filled.Star, "Presets", tint = Fovea.Text)
         }
@@ -469,6 +490,25 @@ private fun MoreSheet(onDismiss: () -> Unit) {
                 "Ultra HD", "Dual video", "Timed burst", "Tilt-shift", "Watermark", "RAW / DNG capture"
             ).forEach { name ->
                 SettingRow(name) { UiOnlyTag("PLANNED") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LookSheet(current: Look, onPick: (Look) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Fovea.Graphite, contentColor = Fovea.Text) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = Fovea.ScreenPadding).padding(bottom = 24.dp)) {
+            Text("Looks", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "A look is a color grade added to the saved photo. Your original is always kept, and the look is saved as a second copy. The live preview is only an approximation.",
+                color = Fovea.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp)
+            )
+            Look.values().forEach { l ->
+                SettingRow(l.label, l.blurb, onClick = { onPick(l); onDismiss() }) {
+                    if (l == current) Icon(Icons.Filled.Check, "Selected", tint = Fovea.Accent)
+                }
             }
         }
     }

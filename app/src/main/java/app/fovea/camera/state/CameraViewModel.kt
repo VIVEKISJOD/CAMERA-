@@ -31,6 +31,7 @@ class CameraViewModel : ViewModel() {
     fun toggleFlag(f: UiFlag) = change { copy(flags = if (f in flags) flags - f else flags + f) }
     fun setShutterSound(v: Boolean) = change { copy(shutterSound = v) }
     fun setVolumeShutter(v: Boolean) = change { copy(volumeShutter = v) }
+    fun setLook(l: Look) = change { copy(look = l) }
     fun setQuery(q: String) = change { copy(query = q) }
     fun postMessage(text: String) = change { copy(message = text) }
     fun clearMessage() = change { copy(message = null) }
@@ -39,7 +40,7 @@ class CameraViewModel : ViewModel() {
         copy(
             guide = p.guide, aspect = p.aspect,
             flags = buildSet { if (p.histogram) add(UiFlag.HISTOGRAM); if (p.haptics) add(UiFlag.HAPTICS) },
-            shutterSound = p.shutterSound, volumeShutter = p.volumeShutter
+            shutterSound = p.shutterSound, volumeShutter = p.volumeShutter, look = p.look
         )
     }
 

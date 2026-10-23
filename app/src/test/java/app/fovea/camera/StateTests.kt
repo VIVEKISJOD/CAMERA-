@@ -68,7 +68,7 @@ class CameraViewModelTest {
     }
     @Test fun persistedRoundTrip() {
         val vm = CameraViewModel()
-        val p = PersistedSettings(GuideType.SPIRAL, AspectOption.R169, true, false, false, true)
+        val p = PersistedSettings(GuideType.SPIRAL, AspectOption.R169, true, false, false, true, Look.VIVID_POP)
         vm.applyPersisted(p)
         assertEquals(p, vm.state.value.toPersisted())
     }
@@ -85,4 +85,28 @@ class UpdateParserTest {
         assertFalse(app.fovea.camera.update.UpdateParser.isNewer(4, 4))
         assertFalse(app.fovea.camera.update.UpdateParser.isNewer(3, 4))
     }
+}
+
+class LookMathTest {
+    @Test fun offIsIdentity() {
+        val m = LookMath.matrix(Look.OFF)
+        val id = floatArrayOf(1f,0f,0f,0f,0f, 0f,1f,0f,0f,0f, 0f,0f,1f,0f,0f, 0f,0f,0f,1f,0f)
+        for (i in 0 until 20) assertEquals(id[i], m[i], 0.001f)
+    }
+    @Test fun vividIncreasesColorSpread() {
+        val before = intArrayOf(140, 110, 90)
+        val after = LookMath.apply(before[0], before[1], before[2], Look.VIVID_POP)
+        assertTrue((after.max() - after.min()) > (before.max() - before.min()))
+    }
+    @Test fun softFadeLiftsBlacks() {
+        val after = LookMath.apply(0, 0, 0, Look.SOFT_FADE)
+        assertTrue(after.all { it > 0 })
+    }
+    @Test fun outputStaysInRange() {
+        for (look in Look.values()) {
+            val p = LookMath.apply(255, 255, 255, look)
+            assertTrue(p.all { it in 0..255 })
+        }
+    }
+    @Test fun matrixHasTwentyValues() = assertEquals(20, LookMath.matrix(Look.RICH_CONTRAST).size)
 }

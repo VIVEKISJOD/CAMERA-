@@ -38,6 +38,7 @@ import androidx.lifecycle.LifecycleOwner
 import app.fovea.camera.state.AspectOption
 import app.fovea.camera.state.AwbOption
 import app.fovea.camera.state.FlashMode
+import app.fovea.camera.state.Look
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +59,7 @@ import kotlin.math.roundToInt
 class CameraEngine(private val context: Context) {
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private val analysisExecutor = Executors.newSingleThreadExecutor()
+    private val lookExecutor = Executors.newSingleThreadExecutor()
     private val sound = MediaActionSound().apply { load(MediaActionSound.SHUTTER_CLICK) }
 
     private var provider: ProcessCameraProvider? = null
@@ -264,7 +266,7 @@ class CameraEngine(private val context: Context) {
 
     private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
 
-    fun takePhoto(playSound: Boolean, onDone: (Boolean) -> Unit) {
+    fun takePhoto(playSound: Boolean, look: Look, onDone: (Boolean) -> Unit) {
         val ic = imageCapture
         if (ic == null) { events.tryEmit("Camera is not ready yet."); onDone(false); return }
         val values = ContentValues().apply {
@@ -278,8 +280,22 @@ class CameraEngine(private val context: Context) {
         if (playSound) sound.play(MediaActionSound.SHUTTER_CLICK)
         ic.takePicture(opts, mainExecutor, object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
-                lastSaved.value = r.savedUri
+                val src = r.savedUri
+                lastSaved.value = src
                 onDone(true)
+                if (look != Look.OFF && src != null) {
+                    lookExecutor.execute {
+                        try {
+                            val copy = LookProcessor.createLookCopy(context, src, look)
+                            if (copy != null) {
+                                lastSaved.value = copy
+                                events.tryEmit("Saved original + ${look.label} copy")
+                            } else events.tryEmit("Look could not be applied. Original is saved.")
+                        } catch (t: Throwable) {
+                            events.tryEmit("Look failed (${t.javaClass.simpleName}). Original is saved.")
+                        }
+                    }
+                }
             }
             override fun onError(e: ImageCaptureException) {
                 events.tryEmit("Photo failed: ${e.message}")
@@ -348,5 +364,6 @@ class CameraEngine(private val context: Context) {
         provider?.unbindAll()
         sound.release()
         analysisExecutor.shutdown()
+        lookExecutor.shutdown()
     }
 }
