@@ -44,6 +44,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -137,7 +140,10 @@ fun CameraScreen(
 
     DisposableEffect(Unit) {
         engine.cameraScreenVisible = true
-        onDispose { engine.cameraScreenVisible = false }
+        onDispose {
+            engine.cameraScreenVisible = false
+            engine.unbind()
+        }
     }
     LaunchedEffect(Unit) { engine.events.collect { vm.postMessage(it) } }
     LaunchedEffect(Unit) { engine.volumeEvents.collect { shutter() } }
@@ -242,7 +248,7 @@ private fun TopToken(title: String, value: String, active: Boolean, enabled: Boo
         else -> Fovea.Text
     }
     Column(
-        Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 48.dp).clickable(enabled = enabled, onClick = onClick),
+        Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 48.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
         Text(title, color = Fovea.Muted, fontSize = uiSp(9f), letterSpacing = 1.sp)
@@ -425,7 +431,7 @@ private fun NoteRow(text: String) {
 @Composable
 private fun ProToken(title: String, value: String, selected: Boolean, onClick: () -> Unit) {
     Column(
-        Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 56.dp).clickable(onClick = onClick),
+        Modifier.heightIn(min = Fovea.TouchTarget).widthIn(min = 56.dp).clickable(role = Role.Button, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
         Text(title, color = Fovea.Muted, fontSize = uiSp(9f), letterSpacing = 1.sp)
@@ -446,7 +452,7 @@ private fun ModeRow(s: CameraUiState, vm: CameraViewModel, onMore: () -> Unit) {
 
 @Composable
 private fun ModeToken(label: String, selected: Boolean, dim: Boolean = false, onClick: () -> Unit) {
-    Box(Modifier.heightIn(min = Fovea.TouchTarget).clickable(onClick = onClick).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.heightIn(min = Fovea.TouchTarget).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
         Text(
             label, fontSize = uiSp(13f), fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp,
             color = when { selected -> Fovea.Accent; dim -> Fovea.Muted.copy(alpha = 0.6f); else -> Fovea.Text }
@@ -465,7 +471,9 @@ private fun CaptureBar(
     ) {
         Box(
             Modifier.size(Fovea.TouchTarget).clip(RoundedCornerShape(10.dp)).background(Fovea.Surface2)
-                .border(1.dp, Fovea.Line, RoundedCornerShape(10.dp)).clickable(onClick = onGallery),
+                .border(1.dp, Fovea.Line, RoundedCornerShape(10.dp))
+                .semantics { contentDescription = "Open recent captures" }
+                .clickable(role = Role.Button, onClick = onGallery),
             contentAlignment = Alignment.Center
         ) {
             if (latest != null) MediaThumb(latest, 160, Modifier.matchParentSize())
@@ -474,7 +482,14 @@ private fun CaptureBar(
         val inner = if (s.mode == CaptureMode.VIDEO) Fovea.Danger else Fovea.Text
         Box(
             Modifier.size(Fovea.ShutterSize).clip(CircleShape).border(4.dp, if (enabled) Fovea.Text else Fovea.Muted, CircleShape)
-                .clickable(enabled = enabled, onClick = onShutter),
+                .semantics {
+                    contentDescription = when {
+                        s.recording -> "Stop recording"
+                        s.mode == CaptureMode.VIDEO -> "Start recording"
+                        else -> "Take photo"
+                    }
+                }
+                .clickable(enabled = enabled, role = Role.Button, onClick = onShutter),
             contentAlignment = Alignment.Center
         ) {
             val shape = if (s.recording) RoundedCornerShape(6.dp) else CircleShape

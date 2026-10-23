@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.widget.Toast
 import android.os.Environment
 import android.os.StatFs
 import android.provider.Settings
@@ -46,7 +47,6 @@ import app.fovea.camera.ui.theme.Fovea
 import app.fovea.camera.update.UpdateManager
 import app.fovea.camera.update.UpdateState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -55,6 +55,13 @@ private fun ValueRow(title: String, value: String, subtitle: String? = null, onC
     SettingRow(title, subtitle, onClick = onClick) {
         Text(value, color = Fovea.Accent, style = MaterialTheme.typography.bodyMedium)
     }
+
+/** Starts another app's screen without ever crashing if no app can handle it. */
+private fun safeStart(ctx: Context, intent: Intent, failMessage: String) {
+    try { ctx.startActivity(intent) } catch (e: Exception) {
+        Toast.makeText(ctx, failMessage, Toast.LENGTH_LONG).show()
+    }
+}
 
 private fun storageSummary(ctx: Context): String {
     val free = try { StatFs(Environment.getExternalStorageDirectory().absolutePath).availableBytes } catch (e: Exception) { -1L }
@@ -140,23 +147,26 @@ fun SettingsScreen(
 @Composable
 private fun UpdateSection(updates: UpdateManager) {
     val st by updates.state.collectAsState()
-    val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val installed = "Installed: ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})"
     when (val u = st) {
-        UpdateState.Idle -> SettingRow("Check for updates", installed, onClick = { scope.launch { updates.check() } })
+        UpdateState.Idle -> SettingRow("Check for updates", installed, onClick = { updates.startCheck() })
         UpdateState.Checking -> SettingRow("Checking…", installed)
-        UpdateState.UpToDate -> SettingRow("You're up to date", "$installed. Tap to check again.", onClick = { scope.launch { updates.check() } })
+        UpdateState.UpToDate -> SettingRow("You're up to date", "$installed. Tap to check again.", onClick = { updates.startCheck() })
         is UpdateState.Available -> SettingRow(
             "Update available: ${u.name}", u.notes.take(160).ifBlank { "Tap to download." },
-            onClick = { scope.launch { updates.download(u) } }
+            onClick = { updates.startDownload(u) }
         ) { Text("Download", color = Fovea.Accent) }
         is UpdateState.Downloading -> SettingRow("Downloading… ${u.percent}%", "Your current version keeps working.")
         is UpdateState.Ready -> SettingRow(
             "Ready to install", "Android will ask you to confirm. If it opens a settings page, allow installs from Fovea, then come back and tap again.",
-            onClick = { ctx.startActivity(updates.installIntent(u.file)) }
+            onClick = {
+                try { ctx.startActivity(updates.installIntent(u.file)) } catch (e: Exception) {
+                    Toast.makeText(ctx, "Could not open the installer. Try again.", Toast.LENGTH_LONG).show()
+                }
+            }
         ) { Text("Install", color = Fovea.Accent) }
-        is UpdateState.Error -> SettingRow("Update problem", u.message, onClick = { scope.launch { updates.check() } }) {
+        is UpdateState.Error -> SettingRow("Update problem", u.message, onClick = { updates.startCheck() }) {
             Text("Retry", color = Fovea.Accent)
         }
     }
@@ -335,13 +345,17 @@ fun ReviewScreen(item: MediaItem?, engine: CameraEngine, onBack: () -> Unit) {
         }
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             FoveaChip(if (item.isVideo) "Play" else "Open", {
-                ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                safeStart(
+                    ctx,
+                    Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, if (item.isVideo) "video/*" else "image/*")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                    "No app was found to open this file."
+                )
             })
             FoveaChip("Share", {
                 val send = Intent(Intent.ACTION_SEND).setType(if (item.isVideo) "video/mp4" else "image/jpeg")
                     .putExtra(Intent.EXTRA_STREAM, item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                ctx.startActivity(Intent.createChooser(send, "Share"))
+                safeStart(ctx, Intent.createChooser(send, "Share"), "Could not open the share sheet.")
             })
             FoveaChip("Delete", { confirmDelete = true })
         }
@@ -355,6 +369,10 @@ fun ReviewScreen(item: MediaItem?, engine: CameraEngine, onBack: () -> Unit) {
                 TextButton({
                     confirmDelete = false
                     if (MediaStoreHelper.delete(ctx, item.uri)) { engine.lastSaved.value = null; onBack() }
+                    else Toast.makeText(
+                        ctx, "Could not delete this file. It may belong to an older install of Fovea. Delete it from your Gallery app.",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }) { Text("Delete", color = Fovea.Danger) }
             },
             dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },

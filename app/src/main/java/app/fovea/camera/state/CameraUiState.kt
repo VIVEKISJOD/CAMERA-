@@ -12,7 +12,7 @@ enum class GuideType(val label: String, val blurb: String) {
     NONE("None", "No overlay"),
     THIRDS("Rule of thirds", "Two vertical and two horizontal lines"),
     GOLDEN_GRID("Golden grid", "Lines at 38.2% and 61.8%"),
-    SPIRAL("Golden spiral", "Logarithmic spiral toward a focal point"),
+    SPIRAL("Golden spiral", "Golden-ratio spiral fitted to the frame"),
     DIAGONAL("Diagonals", "Corner-to-corner lines"),
     TRIANGLE("Triangles", "Diagonal plus two perpendiculars"),
     CENTER("Center cross", "Crosshair at the frame center"),

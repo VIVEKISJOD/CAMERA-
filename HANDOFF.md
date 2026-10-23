@@ -21,9 +21,25 @@ Uploads the stage ZIP to the repo root. A GitHub Action (`ci/unzip-build.yml`, p
 Flash, HDR, aspect ratio, timer, tilt-shift, timed burst, watermark; modes Pro, Video, Photo, Portrait, Documents, Ultra HD, Night, Slow motion, Time-lapse, Long exposure, Panorama, Dual video; gridlines, preserve settings, shutter sound, volume-button function, save location, anti-banding, restore defaults; histogram, DNG/HEIF, manual focus/temp/tint/exposure; color mixer, vignette, filters, frame editing.
 
 ## Six stages (one at a time, wait for authorization)
-1 UI — DONE. 2 Real camera — DONE (owner confirmed it works on his phone). 3 Complete settings — IN PROGRESS (this ZIP, uncompiled). 4 Refinement/stability. 5 Offline 8-char preset codes (compact versioned bit-packed binary, deterministic, validated) + guide customization. 6 Public release (secret-based signing key, README, license, privacy doc).
+1 UI — DONE. 2 Real camera — DONE (owner confirmed it works on his phone). 3 Complete settings — DONE for now (compiled, owner confirmed it works; gaps listed under Stage 3). 4 Refinement/stability — IN PROGRESS (this ZIP, written but NOT compiled). 5 Offline 8-char preset codes (compact versioned bit-packed binary, deterministic, validated) + guide customization. 6 Public release (secret-based signing key, README, license, privacy doc).
 
-## Stage 3 status (CameraProject-Stage-03-Settings.zip; written, NOT compiled or tested)
+## Stage 4 status (CameraProject-Stage-04-Stability.zip, app version 0.4.N; written, NOT compiled or tested)
+Owner asked for FIXES ONLY in Stage 4 (no new features). All changes below are small and low-risk; nothing was compiled because the sandbox has no Android SDK.
+1. Golden spiral guide redrawn (owner reported it looked wrong). Old code drew a floating logarithmic spiral. Now a true golden spiral fitted to the frame: pure geometry in state/GoldenSpiral.kt (frame cut at 61.8% repeatedly, one quarter-ellipse arc per piece, 10 arcs, continuous; portrait starts with top piece, landscape with left piece), drawn by ui/camera/GuideOverlay.kt. Unit tests: continuity, stays inside frame, arcs shrink, start corner.
+2. Camera is released when the camera screen is left (Settings, Gallery, Presets...): CameraEngine.unbind() called from CameraScreen's DisposableEffect. Stops a running recording safely (video is finalized), saves battery, frees the camera. It rebinds on return. Capabilities are kept so the Device capabilities screen still works.
+3. Interrupted video: app sent to background, low storage or size limit no longer shows a meaningless "error code N". The partly recorded video is kept, the message is human text, and recording now has a file-size limit = free space minus 30 MB so it stops cleanly before storage is full. Too-short recording says nothing was saved.
+4. Camera start: a cancelled start (screen changed during first start) no longer shows a false "Camera could not start".
+5. Updater: check/download now run in UpdateManager's own scope (startCheck/startDownload) so leaving Settings no longer leaves it stuck on "Checking" or "Downloading".
+6. Crash guards: Open/Share/Install with no app that can handle it now show a message instead of crashing; failed delete shows a message (can happen for files from an older Fovea install).
+7. Look copy: a failed JPEG write or out-of-memory removes the half-written file; no crash if the app is closing while a look is processing.
+8. Saved gridline opacity/thickness are clamped when loaded (corrupt value cannot break drawing).
+9. Accessibility: shutter and recent-capture buttons have spoken descriptions (Take photo / Start recording / Stop recording / Open recent captures); top tokens, mode tokens and pro tokens are marked as buttons.
+10. Version 0.4.N (build.gradle.kts), RELEASE_NOTES.md updated.
+Deliberately NOT changed (be honest with the owner): the app stays portrait-locked (screen rotation not supported by design), presets still in memory only (Stage 5), no real-device battery/memory profiling or instrumented tests were possible, TalkBack was not fully audited, errors caused by another app taking the camera are not observed yet, release title in the workflow still says 0.2.N.
+Ideas for a later small stability pass: observe CameraX camera state errors, TalkBack audit, rotation support decision, remember flash/timer.
+
+
+## Stage 3 status (compiled; owner confirmed it works)
 Real, persisted settings (SharedPreferences via SettingsStore): open-in mode and start camera (or last used), JPEG quality (100/95/85), prioritize speed (CameraX min-latency), video quality (4K/FHD/HD/SD with fallback), record audio, gridline color/opacity/thickness (Gridlines screen), histogram, shutter sound, volume-button shutter, haptics, reduce animations, larger camera text (x1.15), selected Look. Settings screen also shows storage (file count + free space), permission status (opens app settings), privacy facts, and Restore defaults (never deletes photos/videos/presets and does not change the current mode). Low-storage guard blocks capture under 50 MB (photo) / 200 MB (video). 13 more Looks added (20 total) in state/Look.kt, APPEND ONLY.
 Stage 3 still missing: language infrastructure (string resources/locale config), metadata options, custom save folder, accent/theme choices, manual-control defaults, preset behavior settings (Stage 5), location tagging (intentionally not offered: app never reads location).
 Likely next small items (bundle with each fix): remember flash/timer, time-lapse or burst, tilt-shift/watermark, DNG capture where hardware allows.
@@ -37,7 +53,7 @@ Code map (`app/src/main/java/app/fovea/camera/`): camera/ (CameraEngine = only c
 Stack: Kotlin 2.0.20, AGP 8.6.1, Gradle 8.9 (CI), Compose BOM 2024.09.00, CameraX 1.3.4, minSdk 29, compileSdk 35.
 
 ## Test status (honest)
-Stage 2 base compiled on GitHub Actions and the owner confirmed the camera app works on his phone (tests passed after one fix). Update 2.1 (Looks) compiled and the owner confirmed it works; Stage 3 (above) is NOT yet compiled or tested: the owner has not reported a build result yet. In a new chat, ask the owner (one question) whether the Stage 3 build was green and whether the app works. If CI fails, ask for the `e: file` lines or the lines near `FAILED` in the log.
+Stage 2 base compiled on GitHub Actions and the owner confirmed the camera app works on his phone (tests passed after one fix). Update 2.1 (Looks) compiled and the owner confirmed it works; Stage 3 compiled and the owner says it works fine. Update 3.1 (spiral fix) was never uploaded on its own; it is included in Stage 4. Stage 4 (above) is written but NOT yet compiled or tested: ask the owner (one question) whether the Stage 4 build was green and whether the spiral and camera behave correctly. If CI fails, ask for the `e: file` lines or the lines near `FAILED` in the log.
 
 ## Known issues / notes
 - Signing key `app/fovea-personal.jks` is committed on purpose (personal use). The Stage 1 APK used a different key: uninstall Stage 1 once before installing Stage 2; later updates install over each other.
@@ -45,11 +61,11 @@ Stage 2 base compiled on GitHub Actions and the owner confirmed the camera app w
 - No Gradle wrapper; CI uses Gradle 8.9. No launcher icon yet.
 - Manual controls depend on the phone; many phones limit them. Histogram uses brightness only.
 - Presets still in memory only.
-- Cosmetic: the release title in `ci/unzip-build.yml` still says "Fovea 0.2.N" while the app version is 0.3.N. Harmless; fix only when the workflow must be re-pasted anyway.
-- Handoff/changelog in the Stage 3 ZIP were refreshed on 2026-10-23 so they match the Stage 3 code.
+- Cosmetic: the release title in `ci/unzip-build.yml` still says "Fovea 0.2.N" while the app version is 0.4.N. Harmless; fix only when the workflow must be re-pasted anyway.
+- Handoff/changelog are updated with every ZIP so they always match the code (see DELIVERY RULE).
 
-## Owner's next steps (Stage 3)
-1. If `ci/unzip-build.yml` is unchanged since Stage 2, do NOT re-paste it (it is unchanged in Stage 3).
-2. In the GitHub repo (mobile browser): delete any old ZIP in the repo root, then Add file > Upload files > choose CameraProject-Stage-03-Settings.zip > Commit changes.
-3. Open the Actions tab and watch the run. If red: copy the lines starting with `e: file` (or lines near `FAILED`) and send them to Claude. If green: install `fovea.apk` from the newest Release (Releases > build-N > fovea.apk) over the old app, or use Settings > Check for updates inside the app.
-4. Test the Stage 3 items listed above, report bugs, then authorize the next stage/item.
+## Owner's next steps (Stage 4)
+1. Do NOT re-paste `ci/unzip-build.yml` (unchanged).
+2. In the GitHub repo (mobile browser): delete any old ZIP in the repo root, then Add file > Upload files > choose CameraProject-Stage-04-Stability.zip > Commit changes. (Stage 3.1 was not uploaded; Stage 4 includes it.)
+3. Open the Actions tab and watch the run. If red: copy the lines starting with `e: file` (or lines near `FAILED`) and send them to Claude. If green: install `fovea.apk` from the newest Release (Releases > build-N > fovea.apk) over the old app, or use Settings > Check for updates.
+4. Quick test: (a) Gridlines > Golden spiral looks right, (b) open Settings while the camera is on and come back: camera returns, (c) start a video then press Home: video should appear in Recent captures, (d) Check for updates, leave Settings, return: it must not be stuck. Report bugs, then authorize Stage 5.

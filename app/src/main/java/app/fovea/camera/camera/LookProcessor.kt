@@ -83,13 +83,15 @@ object LookProcessor {
         val uri = cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         if (uri == null) { out.recycle(); return null }
         try {
-            cr.openOutputStream(uri)?.use { out.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+            val written = cr.openOutputStream(uri)?.use { out.compress(Bitmap.CompressFormat.JPEG, 95, it) }
                 ?: throw IOException("could not open output")
+            if (!written) throw IOException("could not write JPEG")
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             cr.update(uri, values, null, null)
-        } catch (e: Exception) {
-            cr.delete(uri, null, null)
+        } catch (e: Throwable) {
+            // Includes out-of-memory: never leave a half-written (pending) file behind.
+            try { cr.delete(uri, null, null) } catch (ignored: Exception) { }
             out.recycle()
             return null
         }

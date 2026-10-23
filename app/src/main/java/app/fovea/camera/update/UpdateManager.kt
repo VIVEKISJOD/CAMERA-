@@ -6,10 +6,13 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import app.fovea.camera.BuildConfig
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -37,6 +40,13 @@ object UpdateParser {
 class UpdateManager(private val context: Context) {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
+
+    // The work runs in this manager's own scope, so leaving the Settings screen never cancels a check or
+    // download and never leaves the state stuck on "Checking" or "Downloading".
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private fun busy() = _state.value is UpdateState.Checking || _state.value is UpdateState.Downloading
+    fun startCheck() { if (!busy()) scope.launch { check() } }
+    fun startDownload(a: UpdateState.Available) { if (!busy()) scope.launch { download(a) } }
 
     suspend fun check() {
         _state.value = UpdateState.Checking

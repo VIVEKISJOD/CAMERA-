@@ -1,1 +1,1 @@
-Stage 3: more settings that really work (quality, start mode, gridline style, accessibility) and 13 more Looks.
+Stage 4: stability fixes (camera release, interrupted video, updater, crash guards), golden spiral redrawn correctly.

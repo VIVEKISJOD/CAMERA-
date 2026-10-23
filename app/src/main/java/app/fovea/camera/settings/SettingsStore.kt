@@ -28,8 +28,8 @@ class SettingsStore(context: Context) {
             videoQuality = enumOf("videoQuality", d.videoQuality),
             recordAudio = p.getBoolean("recordAudio", d.recordAudio),
             guideColor = enumOf("guideColor", d.guideColor),
-            guideOpacity = p.getFloat("guideOpacity", d.guideOpacity),
-            guideThickness = p.getFloat("guideThickness", d.guideThickness),
+            guideOpacity = p.getFloat("guideOpacity", d.guideOpacity).coerceIn(0.2f, 1f),
+            guideThickness = p.getFloat("guideThickness", d.guideThickness).coerceIn(1f, 4f),
             reduceMotion = p.getBoolean("reduceMotion", d.reduceMotion),
             largeText = p.getBoolean("largeText", d.largeText)
         )

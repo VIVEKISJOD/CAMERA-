@@ -11,12 +11,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import app.fovea.camera.state.GoldenSpiral
 import app.fovea.camera.state.GuideType
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.ln
-import kotlin.math.sin
 
 /** Vector composition guides. Pure overlay: never part of a captured image. */
 @Composable
@@ -47,18 +43,12 @@ private fun DrawScope.drawGuide(type: GuideType, w: Float, h: Float, color: Colo
             for (f in listOf(a, b)) { line(w * f, 0f, w * f, h); line(0f, h * f, w, h * f) }
         }
         GuideType.SPIRAL -> {
-            val growth = (ln(phi.toDouble()) / (PI / 2)).toFloat()
-            val cx = w * b
-            val cy = h * 0.5f
-            val r0 = minOf(w, h) * 0.38f
             val path = Path()
-            val steps = 160
-            for (i in 0..steps) {
-                val theta = i * (4f * PI.toFloat()) / steps
-                val r = r0 * exp(-growth * theta)
-                val x = cx + r * cos(theta)
-                val y = cy + r * sin(theta)
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            GoldenSpiral.arcs(w, h).forEachIndexed { i, a ->
+                path.arcTo(
+                    androidx.compose.ui.geometry.Rect(a.cx - a.rx, a.cy - a.ry, a.cx + a.rx, a.cy + a.ry),
+                    a.startDeg, 90f, i == 0
+                )
             }
             drawPath(path, color, style = Stroke(width = sw))
         }

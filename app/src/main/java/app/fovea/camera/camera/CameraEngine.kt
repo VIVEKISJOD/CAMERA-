@@ -43,6 +43,7 @@ import app.fovea.camera.state.VideoQuality
 import android.os.Environment
 import android.os.StatFs
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -50,6 +51,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
@@ -61,6 +63,7 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalCamera2Interop::class)
 class CameraEngine(private val context: Context) {
     private val MIN_FREE_BYTES = 50L * 1024 * 1024
+    private val VIDEO_RESERVE_BYTES = 30L * 1024 * 1024
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val lookExecutor = Executors.newSingleThreadExecutor()
@@ -149,9 +152,26 @@ class CameraEngine(private val context: Context) {
             zoomRatio.value = 1f
             caps.value = readCaps(cam, p)
             bindCount.value = bindCount.value + 1
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             events.tryEmit("Camera could not start: ${e.message ?: "unknown error"}")
         }
+    }
+
+    /** Called when the camera screen leaves the screen: stops any recording and releases the camera. */
+    fun unbind() {
+        try {
+            recording?.stop()
+            recording = null
+            provider?.unbindAll()
+        } catch (e: Exception) {
+            // Releasing must never crash the app.
+        }
+        camera = null
+        imageCapture = null
+        videoCapture = null
+        histogram.value = null
     }
 
     private fun readCaps(cam: Camera, p: ProcessCameraProvider): DeviceCaps {
@@ -303,16 +323,20 @@ class CameraEngine(private val context: Context) {
                 lastSaved.value = src
                 onDone(true)
                 if (look != Look.OFF && src != null) {
-                    lookExecutor.execute {
-                        try {
-                            val copy = LookProcessor.createLookCopy(context, src, look)
-                            if (copy != null) {
-                                lastSaved.value = copy
-                                events.tryEmit("Saved original + ${look.label} copy")
-                            } else events.tryEmit("Look could not be applied. Original is saved.")
-                        } catch (t: Throwable) {
-                            events.tryEmit("Look failed (${t.javaClass.simpleName}). Original is saved.")
+                    try {
+                        lookExecutor.execute {
+                            try {
+                                val copy = LookProcessor.createLookCopy(context, src, look)
+                                if (copy != null) {
+                                    lastSaved.value = copy
+                                    events.tryEmit("Saved original + ${look.label} copy")
+                                } else events.tryEmit("Look could not be applied. Original is saved.")
+                            } catch (t: Throwable) {
+                                events.tryEmit("Look failed (${t.javaClass.simpleName}). Original is saved.")
+                            }
                         }
+                    } catch (e: RejectedExecutionException) {
+                        // App is closing; the original photo is already saved.
                     }
                 }
             }
@@ -334,8 +358,12 @@ class CameraEngine(private val context: Context) {
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
             put(MediaStore.MediaColumns.RELATIVE_PATH, "Movies/Fovea")
         }
-        val out = MediaStoreOutputOptions.Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-            .setContentValues(values).build()
+        val outBuilder = MediaStoreOutputOptions.Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+            .setContentValues(values)
+        // Stop cleanly before the storage is completely full, so the video is finalized and playable.
+        val free = freeBytes()
+        if (free != Long.MAX_VALUE) outBuilder.setFileSizeLimit((free - VIDEO_RESERVE_BYTES).coerceAtLeast(MIN_FREE_BYTES))
+        val out = outBuilder.build()
         var pending = vc.output.prepareRecording(context, out)
         if (withAudio) pending = pending.withAudioEnabled()
         recording = pending.start(mainExecutor) { ev ->
@@ -344,12 +372,34 @@ class CameraEngine(private val context: Context) {
                 is VideoRecordEvent.Finalize -> {
                     recording = null
                     onState(false)
-                    if (ev.hasError()) events.tryEmit("Video stopped with error code ${ev.error}.")
-                    else lastSaved.value = ev.outputResults.outputUri
+                    if (!ev.hasError()) {
+                        lastSaved.value = ev.outputResults.outputUri
+                    } else {
+                        // These stops are not failures of the file: what was recorded so far is kept.
+                        val kept = when (ev.error) {
+                            VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED,
+                            VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE,
+                            VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE -> true
+                            else -> false
+                        }
+                        if (kept) lastSaved.value = ev.outputResults.outputUri
+                        events.tryEmit(videoErrorText(ev.error))
+                    }
                 }
                 else -> Unit
             }
         }
+    }
+
+    private fun videoErrorText(code: Int): String = when (code) {
+        VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED ->
+            "Recording stopped because free space is running low. Check Recent captures for the video."
+        VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE ->
+            "Recording stopped because storage is full. Check Recent captures for the video."
+        VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE ->
+            "Recording was interrupted (camera closed). Check Recent captures for the video."
+        VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA -> "Recording was too short, so nothing was saved."
+        else -> "Video could not be saved (error $code)."
     }
 
     private fun analyze(img: androidx.camera.core.ImageProxy) {

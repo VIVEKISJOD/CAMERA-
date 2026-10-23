@@ -165,3 +165,47 @@ class MoreLooksTest {
         assertTrue(shorts.all { it.length <= 7 })
     }
 }
+
+class GoldenSpiralTest {
+    private fun checkFrame(w: Float, h: Float) {
+        val arcs = GoldenSpiral.arcs(w, h)
+        assertEquals(10, arcs.size)
+        // The curve must be one continuous line: each arc ends where the next one starts.
+        for (i in 0 until arcs.size - 1) {
+            val end = GoldenSpiral.pointAt(arcs[i], arcs[i].startDeg + 90f)
+            val next = GoldenSpiral.pointAt(arcs[i + 1], arcs[i + 1].startDeg)
+            assertEquals(end.first, next.first, 0.05f)
+            assertEquals(end.second, next.second, 0.05f)
+        }
+        // The curve must stay inside the frame.
+        for (a in arcs) {
+            var d = 0f
+            while (d <= 90f) {
+                val p = GoldenSpiral.pointAt(a, a.startDeg + d)
+                assertTrue(p.first >= -0.5f && p.first <= w + 0.5f)
+                assertTrue(p.second >= -0.5f && p.second <= h + 0.5f)
+                d += 5f
+            }
+        }
+        // Each arc fills a smaller piece than the one before.
+        for (i in 0 until arcs.size - 1) {
+            assertTrue(arcs[i + 1].rx * arcs[i + 1].ry < arcs[i].rx * arcs[i].ry)
+        }
+    }
+    @Test fun portraitFrame() = checkFrame(1080f, 1440f)
+    @Test fun tallFrame() = checkFrame(1080f, 1920f)
+    @Test fun landscapeFrame() = checkFrame(1440f, 1080f)
+    @Test fun squareFrame() = checkFrame(500f, 500f)
+    @Test fun portraitStartsInTopLeftCorner() {
+        val a = GoldenSpiral.arcs(1080f, 1440f)[0]
+        val p = GoldenSpiral.pointAt(a, a.startDeg)
+        assertEquals(0f, p.first, 0.01f)
+        assertEquals(0f, p.second, 0.01f)
+    }
+    @Test fun landscapeStartsInBottomLeftCorner() {
+        val a = GoldenSpiral.arcs(1440f, 1080f)[0]
+        val p = GoldenSpiral.pointAt(a, a.startDeg)
+        assertEquals(0f, p.first, 0.01f)
+        assertEquals(1080f, p.second, 0.01f)
+    }
+}
